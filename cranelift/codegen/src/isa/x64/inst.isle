@@ -1062,6 +1062,22 @@
 (decl encode_fcmp_imm (FcmpImm) u8)
 (extern constructor encode_fcmp_imm encode_fcmp_imm)
 
+(type ProducesBool (enum (ProducesBool (producer ProducesFlags) (cond CC))))
+
+(decl bool (ProducesFlags CC) ProducesBool)
+(rule (bool producer cc) (ProducesBool.ProducesBool producer cc))
+
+;; Turn a ProducesBool into the values 0/1.
+(decl lower_bool (Type ProducesBool) Gpr)
+(rule (lower_bool (fits_in_64 ty) (ProducesBool.ProducesBool producer cond))
+      (with_flags_reg producer (x64_setcc cond)))
+
+;; Creates a `ProducesBool` from the comparison of two values.
+(decl icmp_val (IntCC Value Value) ProducesBool)
+(rule (icmp_val cc a @ (value_type (fits_in_64 ty)) b)
+      (let ((size OperandSize (raw_operand_size_of_type ty)))
+           (bool (x64_cmp size b a) cc)))
+
 ;;;; Newtypes for Different Register Classes ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (type Gpr (primitive Gpr))

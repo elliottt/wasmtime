@@ -1449,8 +1449,7 @@
 ;; Cranelift's verification that `a` and `b` are of the same type.
 ;; Unfortunately for clarity, the registers are flipped here (TODO).
 (rule (lower (icmp cc a @ (value_type (fits_in_64 ty)) b))
-      (let ((size OperandSize (raw_operand_size_of_type ty)))
-           (with_flags (x64_cmp size b a) (x64_setcc cc))))
+      (lower_bool ty (icmp_val cc a b)))
 
 ;; For XMM-held values, we lower to `PCMP*` instructions, sometimes more than
 ;; one. To note: what is different here about the output values is that each
@@ -1466,6 +1465,7 @@
       (let ((checked Xmm (x64_pcmpeq ty a b))
             (all_ones Xmm (vector_all_ones ty)))
            (x64_pxor checked all_ones)))
+
 ;; Signed comparisons have a single-instruction lowering, unlike their unsigned
 ;; counterparts. These latter instructions use the unsigned min/max
 ;; (PMINU*/PMAXU*) and negate the result (PXOR with all 1s).
