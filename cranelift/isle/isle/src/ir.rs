@@ -180,6 +180,47 @@ pub enum ExprInst {
 }
 
 impl ExprInst {
+    /// Remap the pattern [`InstId`] values inside this [`ExprInst`].
+    fn remap_pat_inst<F: Fn(usize) -> usize>(&self, map: &F) -> Self {
+        match self {
+            &ExprInst::ConstInt { ty, val } => ExprInst::ConstInt { ty, val },
+            &ExprInst::ConstPrim { ty, val } => ExprInst::ConstPrim { ty, val },
+            &ExprInst::CreateVariant {
+                ref inputs,
+                ty,
+                variant,
+            } => ExprInst::CreateVariant {
+                inputs: inputs
+                    .iter()
+                    .map(|(val, ty)| (val.remap_pat_inst(map), ty.clone()))
+                    .collect(),
+                ty,
+                variant,
+            },
+            &ExprInst::Construct {
+                ref inputs,
+                ty,
+                term,
+                infallible,
+                multi,
+            } => ExprInst::Construct {
+                inputs: inputs
+                    .iter()
+                    .map(|(val, ty)| (val.remap_pat_inst(map), ty.clone()))
+                    .collect(),
+                ty,
+                term,
+                infallible,
+                multi,
+            },
+            &ExprInst::Return { index, ty, value } => ExprInst::Return {
+                index,
+                ty,
+                value: value.remap_pat_inst(map),
+            },
+        }
+    }
+
     /// Invoke `f` for each value in this expression.
     pub fn visit_values<F: FnMut(Value)>(&self, mut f: F) {
         match self {
@@ -223,6 +264,88 @@ pub struct ExprSequence {
     pub pos: Pos,
 }
 
+impl Value {
+    /// Remap the pattern [`InstId`] values inside this [`Value`].
+    fn remap_pat_inst<F: Fn(usize) -> usize>(&self, map: &F) -> Self {
+        match self {
+            &Value::Pattern { ref inst, output } => Value::Pattern {
+                inst: InstId(map(inst.0)),
+                output,
+            },
+            Value::Expr { .. } => self.clone(),
+        }
+    }
+}
+
+impl PatternInst {
+    /// Remap the pattern [`InstId`] values inside this [`PatternInst`].
+    fn remap_pat_inst<F: Fn(usize) -> usize>(&self, map: &F) -> Self {
+        match self {
+            &PatternInst::MatchEqual { ref a, ref b, ty } => PatternInst::MatchEqual {
+                a: a.remap_pat_inst(map),
+                b: b.remap_pat_inst(map),
+                ty,
+            },
+            &PatternInst::MatchInt {
+                ref input,
+                ty,
+                int_val,
+            } => PatternInst::MatchInt {
+                input: input.remap_pat_inst(map),
+                ty,
+                int_val,
+            },
+            &PatternInst::MatchPrim { ref input, ty, val } => PatternInst::MatchPrim {
+                input: input.remap_pat_inst(map),
+                ty,
+                val,
+            },
+            &PatternInst::MatchVariant {
+                ref input,
+                input_ty,
+                ref arg_tys,
+                variant,
+            } => PatternInst::MatchVariant {
+                input: input.remap_pat_inst(map),
+                input_ty,
+                arg_tys: arg_tys.clone(),
+                variant,
+            },
+            &PatternInst::Expr {
+                ref seq,
+                ref output,
+                output_ty,
+            } => PatternInst::Expr {
+                seq: ExprSequence {
+                    insts: seq.insts.iter().map(|expr| expr.remap_pat_inst(map)).collect(),
+                    pos: seq.pos,
+                },
+                output: output.remap_pat_inst(map),
+                output_ty,
+            },
+            &PatternInst::Extract {
+                ref inputs,
+                infallible,
+                ref input_tys,
+                ref output_tys,
+                term,
+                multi,
+            } => PatternInst::Extract {
+                inputs: inputs
+                    .iter()
+                    .map(|input| input.remap_pat_inst(map))
+                    .collect(),
+                infallible,
+                input_tys: input_tys.clone(),
+                output_tys: output_tys.clone(),
+                term,
+                multi,
+            },
+            &PatternInst::Arg { index, ty } => PatternInst::Arg { index, ty },
+        }
+    }
+}
+
 impl ExprSequence {
     /// Is this expression sequence producing a constant integer?
     ///
@@ -262,8 +385,7 @@ impl PatternSequence {
     }
 
     fn add_arg(&mut self, index: usize, ty: TypeId) -> Value {
-        let inst = InstId(self.insts.len());
-        self.add_inst(PatternInst::Arg { index, ty });
+        let inst = self.add_inst(PatternInst::Arg { index, ty });
         Value::Pattern { inst, output: 0 }
     }
 
@@ -477,9 +599,60 @@ impl PatternSequence {
                 }
             }
             &Pattern::And(_ty, ref children) => {
-                for child in children {
-                    self.gen_pattern(input, typeenv, termenv, child, vars);
+                let start = self.insts.len();
+
+                let mut ranges: Vec<_> = children
+                    .iter()
+                    .filter_map(|child| {
+                        let start = self.insts.len();
+                        self.gen_pattern(input, typeenv, termenv, child, vars);
+                        let end = self.insts.len();
+                        let range = start..end;
+                        if range.is_empty() {
+                            None
+                        } else {
+                            Some(range)
+                        }
+                    })
+                    .collect();
+
+                ranges.sort_by_key(|range| &self.insts[range.start]);
+
+                // if the leading pattern of each sub-group didn't change the order of the ranges,
+                // we don't need to do anything else.
+                if ranges
+                    .iter()
+                    .zip(ranges.iter().skip(1))
+                    .all(|(a, b)| a.start < b.start)
+                {
+                    return;
                 }
+
+                // make an index mapping out of the ranges
+                let mut indices: Vec<usize> = vec![0; self.insts.len() - start];
+                for (new, old) in ranges.iter().cloned().flat_map(|range| range).enumerate() {
+                    indices[old - start] = new + start;
+                }
+
+                let remap = |index| {
+                    if index < start {
+                        index
+                    } else {
+                        indices[index - start]
+                    }
+                };
+
+                for value in vars.0.values_mut() {
+                    *value = value.remap_pat_inst(&remap);
+                }
+
+                // Rebuild the patterns in the range added by the `and` instruction, updating any
+                // isntruction references to match the new indices.
+                let mut pats: Vec<_> = ranges
+                    .into_iter()
+                    .flat_map(|range| self.insts[range].iter().map(|pat| pat.remap_pat_inst(&remap)))
+                    .collect();
+                self.insts[start..].swap_with_slice(&mut pats[..]);
             }
             &Pattern::Wildcard(_ty) => {
                 // Nothing!
@@ -496,8 +669,7 @@ impl ExprSequence {
     }
 
     fn add_const_int(&mut self, ty: TypeId, val: i128) -> Value {
-        let inst = InstId(self.insts.len());
-        self.add_inst(ExprInst::ConstInt { ty, val });
+        let inst = self.add_inst(ExprInst::ConstInt { ty, val });
         Value::Expr { inst, output: 0 }
     }
 
