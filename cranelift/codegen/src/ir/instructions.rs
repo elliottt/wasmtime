@@ -186,10 +186,10 @@ impl InstructionData {
                 ..
             } => BranchInfo::SingleDest(destination, args.as_slice(pool)),
             Self::Branch {
-                destination,
-                ref args,
+                branch_then,
+                branch_else,
                 ..
-            } => BranchInfo::SingleDest(destination, &args.as_slice(pool)[1..]),
+            } => BranchInfo::Conditional(branch_then, branch_else),
             Self::BranchTable {
                 table, destination, ..
             } => BranchInfo::Table(table, Some(destination)),
@@ -206,8 +206,8 @@ impl InstructionData {
     /// Multi-destination branches like `br_table` return `None`.
     pub fn branch_destination(&self) -> Option<Block> {
         match *self {
-            Self::Jump { destination, .. } | Self::Branch { destination, .. } => Some(destination),
-            Self::BranchTable { .. } => None,
+            Self::Jump { destination, .. } => Some(destination),
+            Self::Branch {..} | Self::BranchTable { .. } => None,
             _ => {
                 debug_assert!(!self.opcode().is_branch());
                 None
@@ -224,12 +224,8 @@ impl InstructionData {
             Self::Jump {
                 ref mut destination,
                 ..
-            }
-            | Self::Branch {
-                ref mut destination,
-                ..
             } => Some(destination),
-            Self::BranchTable { .. } => None,
+            Self::Branch {..} | Self::BranchTable { .. } => None,
             _ => {
                 debug_assert!(!self.opcode().is_branch());
                 None
@@ -374,6 +370,9 @@ pub enum BranchInfo<'a> {
 
     /// This is a branch or jump to a single destination block, possibly taking value arguments.
     SingleDest(Block, &'a [Value]),
+
+    /// This is a conditional branch with two destinations.
+    Conditional(Block, Block),
 
     /// This is a jump table branch which can have many destination blocks and maybe one default block.
     Table(JumpTable, Option<Block>),

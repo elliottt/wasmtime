@@ -391,25 +391,22 @@ mod tests {
             let mut cur = FuncCursor::new(&mut func);
 
             cur.insert_block(block0);
-            cur.ins().brnz(cond, block1, &[]);
-            cur.ins().jump(block3, &[]);
+            cur.ins().brnz(cond, block1, block3);
 
             cur.insert_block(block1);
             cur.ins().jump(block2, &[]);
 
             cur.insert_block(block2);
-            cur.ins().brnz(cond, block1, &[]);
-            cur.ins().jump(block5, &[]);
+            cur.ins().brnz(cond, block1, block5);
 
             cur.insert_block(block3);
             cur.ins().jump(block4, &[]);
 
             cur.insert_block(block4);
-            cur.ins().brnz(cond, block3, &[]);
-            cur.ins().jump(block5, &[]);
+            cur.ins().brnz(cond, block3, block5);
 
             cur.insert_block(block5);
-            cur.ins().brnz(cond, block0, &[]);
+            cur.ins().jump(block0, &[]);
         }
 
         let mut loop_analysis = LoopAnalysis::new();

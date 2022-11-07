@@ -111,6 +111,16 @@ impl<'f, IIB: InstInserterBase<'f>> InsertBuilder<'f, IIB> {
         // calling `make_inst_results_reusing()`.
         self.with_results([Some(v)])
     }
+
+    /// `brz` implemented in terms of `brcond`.
+    pub fn brz(mut self, c: ir::Value, branch_then: ir::Block, branch_else: ir::Block) -> Inst {
+        self.brcond(c, branch_else, branch_then)
+    }
+
+    /// `brnz` implemented in terms of `brcond`.
+    pub fn brnz(mut self, c: ir::Value, branch_then: ir::Block, branch_else: ir::Block) -> Inst {
+        self.brcond(c, branch_then, branch_else)
+    }
 }
 
 impl<'f, IIB: InstInserterBase<'f>> InstBuilderBase<'f> for InsertBuilder<'f, IIB> {

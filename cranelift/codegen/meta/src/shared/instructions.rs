@@ -17,60 +17,50 @@ fn define_control_flow(
     imm: &Immediates,
     entities: &EntityRefs,
 ) {
-    let block = &Operand::new("block", &entities.block).with_doc("Destination basic block");
-    let args = &Operand::new("args", &entities.varargs).with_doc("block arguments");
-
-    ig.push(
-        Inst::new(
-            "jump",
-            r#"
-        Jump.
-
-        Unconditionally jump to a basic block, passing the specified
-        block arguments. The number and types of arguments must match the
-        destination block.
-        "#,
-            &formats.jump,
-        )
-        .operands_in(vec![block, args])
-        .is_terminator(true)
-        .is_branch(true),
-    );
-
     let ScalarTruthy = &TypeVar::new(
         "ScalarTruthy",
         "A scalar truthy type",
         TypeSetBuilder::new().ints(Interval::All).build(),
     );
 
-    {
-        let c = &Operand::new("c", ScalarTruthy).with_doc("Controlling value to test");
+    let args = &Operand::new("args", &entities.varargs).with_doc("block arguments");
 
+    {
+        let block = &Operand::new("block", &entities.destination).with_doc("Destination basic block");
         ig.push(
             Inst::new(
-                "brz",
+                "jump",
                 r#"
-        Branch when zero.
+            Jump.
 
-        Take the branch when ``c = 0``.
-        "#,
-                &formats.branch,
+            Unconditionally jump to a basic block, passing the specified
+            block arguments. The number and types of arguments must match the
+            destination block.
+            "#,
+                &formats.jump,
             )
-            .operands_in(vec![c, block, args])
+            .operands_in(vec![block, args])
+            .is_terminator(true)
             .is_branch(true),
         );
+    }
+
+    {
+        let c = &Operand::new("c", ScalarTruthy).with_doc("Controlling value to test");
+        let branch_then = &Operand::new("branch_then", &entities.branch_then).with_doc("Destination basic block when condition is true");
+        let branch_else = &Operand::new("branch_else", &entities.branch_else).with_doc("Destination basic block when condition is false");
 
         ig.push(
             Inst::new(
-                "brnz",
+                "brcond",
                 r#"
-        Branch when non-zero.
+        Branch when the cond is not false.
 
         Take the branch when ``c != 0``.
         "#,
                 &formats.branch,
             )
-            .operands_in(vec![c, block, args])
+            .operands_in(vec![c, branch_then, branch_else])
             .is_branch(true),
         );
     }
@@ -82,6 +72,7 @@ fn define_control_flow(
             TypeSetBuilder::new().ints(32..32).build(),
         );
         let x = &Operand::new("x", _i32).with_doc("i32 index into jump table");
+        let block = &Operand::new("block", &entities.destination).with_doc("Default destination basic block");
         let JT = &Operand::new("JT", &entities.jump_table);
 
         ig.push(

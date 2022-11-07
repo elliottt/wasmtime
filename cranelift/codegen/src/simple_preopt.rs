@@ -9,7 +9,7 @@ use crate::divconst_magic_numbers::{magic_s32, magic_s64, magic_u32, magic_u64};
 use crate::divconst_magic_numbers::{MS32, MS64, MU32, MU64};
 use crate::flowgraph::ControlFlowGraph;
 use crate::ir::{
-    condcodes::{CondCode, IntCC},
+    condcodes::IntCC,
     instructions::Opcode,
     types::{I128, I32, I64},
     Block, DataFlowGraph, Function, Inst, InstBuilder, InstructionData, Type, Value,
@@ -578,7 +578,7 @@ mod simplify {
     use crate::ir::{
         dfg::ValueDef,
         immediates,
-        instructions::{Opcode, ValueList},
+        instructions::Opcode,
         types::{I16, I32, I8},
     };
     use std::marker::PhantomData;
@@ -833,7 +833,8 @@ mod simplify {
     struct BranchOptInfo {
         br_inst: Inst,
         cmp_arg: Value,
-        args: ValueList,
+        branch_then: Block,
+        branch_else: Block,
         new_opcode: Opcode,
     }
 
@@ -845,7 +846,8 @@ mod simplify {
     fn branch_opt(pos: &mut FuncCursor, inst: Inst) {
         let mut info = if let InstructionData::Branch {
             opcode: br_opcode,
-            args: ref br_args,
+            branch_then,
+            branch_else,
             ..
         } = pos.func.dfg[inst]
         {
@@ -874,24 +876,19 @@ mod simplify {
                 }
 
                 // icmp_imm returns non-zero when the comparison is true. So, if
-                // we're branching on zero, we need to invert the condition.
-                let cond = match br_opcode {
-                    Opcode::Brz => cmp_cond.inverse(),
-                    Opcode::Brnz => cmp_cond,
-                    _ => return,
-                };
-
-                let new_opcode = match cond {
-                    IntCC::Equal => Opcode::Brz,
-                    IntCC::NotEqual => Opcode::Brnz,
+                // we're branching on zero, we need to switch the branches.
+                let (branch_then, branch_else) = match cmp_cond {
+                    IntCC::Equal => (branch_else, branch_then),
+                    IntCC::NotEqual => (branch_then, branch_else),
                     _ => return,
                 };
 
                 BranchOptInfo {
                     br_inst: inst,
                     cmp_arg,
-                    args: br_args.clone(),
-                    new_opcode,
+                    branch_then,
+                    branch_else,
+                    new_opcode: br_opcode,
                 }
             } else {
                 return;

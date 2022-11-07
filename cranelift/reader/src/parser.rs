@@ -2820,12 +2820,13 @@ impl<'a> Parser<'a> {
             InstructionFormat::Branch => {
                 let ctrl_arg = self.match_value("expected SSA value control operand")?;
                 self.match_token(Token::Comma, "expected ',' between operands")?;
-                let block_num = self.match_block("expected branch destination block")?;
-                let args = self.parse_opt_value_list()?;
+                let branch_then = self.match_block("expected then branch block")?;
+                self.match_token(Token::Comma, "expected ',' between operands")?;
+                let branch_else = self.match_block("expected else branch block")?;
                 InstructionData::Branch {
                     opcode,
-                    destination: block_num,
-                    args: args.into_value_list(&[ctrl_arg], &mut ctx.function.dfg.value_lists),
+                    branch_then,
+                    branch_else,
                 }
             }
             InstructionFormat::BranchTable => {
