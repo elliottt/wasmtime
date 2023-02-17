@@ -73,7 +73,7 @@ use crate::dominator_tree::DominatorTree;
 use crate::entity::SecondaryMap;
 use crate::fx::{FxHashMap, FxHashSet};
 use crate::inst_predicates::visit_block_succs;
-use crate::ir::{Block, Function, Inst, Opcode};
+use crate::ir::{Block, Function, Inst};
 use crate::{machinst::*, trace};
 
 use smallvec::SmallVec;
@@ -85,21 +85,11 @@ pub struct BlockLoweringOrder {
     /// (i) a CLIF block, and (ii) inserted crit-edge blocks before or after;
     /// see [LoweredBlock] for details.
     lowered_order: Vec<LoweredBlock>,
-    /// Successors for all lowered blocks, in one serialized vector. Indexed by
-    /// the ranges in `lowered_succ_ranges`.
-    #[allow(dead_code)]
-    lowered_succs: Vec<(Inst, LoweredBlock)>,
-    /// BlockIndex values for successors for all lowered blocks, in the same
-    /// order as `lowered_succs`.
-    lowered_succ_indices: Vec<(Inst, BlockIndex)>,
-    /// Ranges in `lowered_succs` giving the successor lists for each lowered
+    /// BlockIndex values for successors for all lowered blocks, indexing `lowered_order`.
+    lowered_succ_indices: Vec<BlockIndex>,
+    /// Ranges in `lowered_succ_indices` giving the successor lists for each lowered
     /// block. Indexed by lowering-order index (`BlockIndex`).
-    lowered_succ_ranges: Vec<(usize, usize)>,
-    /// Mapping from CLIF BB to BlockIndex (index in lowered order). Note that
-    /// some CLIF BBs may not be lowered; in particular, we skip unreachable
-    /// blocks.
-    #[allow(dead_code)]
-    orig_map: SecondaryMap<Block, Option<BlockIndex>>,
+    lowered_succ_ranges: Vec<(Option<Inst>, std::ops::Range<usize>)>,
     /// Cold blocks. These blocks are not reordered in the
     /// `lowered_order` above; the lowered order must respect RPO
     /// (uses after defs) in order for lowering to be
@@ -112,7 +102,7 @@ pub struct BlockLoweringOrder {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum LoweredBlock2 {
+pub enum LoweredBlock {
     /// Block in original CLIF.
     Orig {
         /// Original CLIF block.
@@ -129,114 +119,11 @@ pub enum LoweredBlock2 {
     },
 }
 
-impl LoweredBlock2 {
-    /// Unwrap an `Orig` block, or panic.
-    fn orig_block(&self) -> Option<Block> {
-        match self {
-            &LoweredBlock2::Orig { block } => Some(block),
-            _ => None,
-        }
-    }
-}
-
-/// The origin of a block in the lowered block-order: either an original CLIF
-/// block, or an inserted edge-block, or a combination of the two if an edge is
-/// non-critical.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum LoweredBlock {
-    /// Block in original CLIF, with no merged edge-blocks.
-    Orig {
-        /// Original CLIF block.
-        block: Block,
-    },
-    /// Block in the original CLIF, plus edge-block to one succ (which is the
-    /// one successor of the original block).
-    OrigAndEdge {
-        /// The original CLIF block contained in this lowered block.
-        block: Block,
-        /// The edge (jump) instruction transitioning from this block
-        /// to the next, i.e., corresponding to the included edge-block. This
-        /// will be an instruction in `block`.
-        edge_inst: Inst,
-        /// The successor index in this edge, to distinguish multiple
-        /// edges between the same block pair.
-        succ_idx: usize,
-        /// The successor CLIF block.
-        succ: Block,
-    },
-    /// Block in the original CLIF, preceded by edge-block from one pred (which
-    /// is the one pred of the original block).
-    EdgeAndOrig {
-        /// The previous CLIF block, i.e., the edge block's predecessor.
-        pred: Block,
-        /// The edge (jump) instruction corresponding to the included
-        /// edge-block. This will be an instruction in `pred`.
-        edge_inst: Inst,
-        /// The successor index in this edge, to distinguish multiple
-        /// edges between the same block pair.
-        succ_idx: usize,
-        /// The original CLIF block included in this lowered block.
-        block: Block,
-    },
-    /// Split critical edge between two CLIF blocks. This lowered block does not
-    /// correspond to any original CLIF blocks; it only serves as an insertion
-    /// point for work to happen on the transition from `pred` to `succ`.
-    Edge {
-        /// The predecessor CLIF block.
-        pred: Block,
-        /// The edge (jump) instruction corresponding to this edge's transition.
-        /// This will be an instruction in `pred`.
-        edge_inst: Inst,
-        /// The successor index in this edge, to distinguish multiple
-        /// edges between the same block pair.
-        succ_idx: usize,
-        /// The successor CLIF block.
-        succ: Block,
-    },
-}
-
 impl LoweredBlock {
-    /// The associated original (CLIF) block included in this lowered block, if
-    /// any.
-    pub fn orig_block(self) -> Option<Block> {
+    /// Unwrap an `Orig` block, or panic.
+    pub fn orig_block(&self) -> Option<Block> {
         match self {
-            LoweredBlock::Orig { block, .. }
-            | LoweredBlock::OrigAndEdge { block, .. }
-            | LoweredBlock::EdgeAndOrig { block, .. } => Some(block),
-            LoweredBlock::Edge { .. } => None,
-        }
-    }
-
-    /// The associated in-edge, if any.
-    #[cfg(test)]
-    pub fn in_edge(self) -> Option<(Block, Inst, Block)> {
-        match self {
-            LoweredBlock::EdgeAndOrig {
-                pred,
-                edge_inst,
-                block,
-                ..
-            } => Some((pred, edge_inst, block)),
-            _ => None,
-        }
-    }
-
-    /// the associated out-edge, if any. Also includes edge-only blocks.
-    #[cfg(test)]
-    pub fn out_edge(self) -> Option<(Block, Inst, Block)> {
-        match self {
-            LoweredBlock::OrigAndEdge {
-                block,
-                edge_inst,
-                succ,
-                ..
-            } => Some((block, edge_inst, succ)),
-            LoweredBlock::Edge {
-                pred,
-                edge_inst,
-                succ,
-                ..
-            } => Some((pred, edge_inst, succ)),
+            &LoweredBlock::Orig { block } => Some(block),
             _ => None,
         }
     }
@@ -250,7 +137,7 @@ impl BlockLoweringOrder {
         // Step 1: compute the in-edge and out-edge count of every block.
         let mut block_in_count = SecondaryMap::with_default(0);
         let mut block_out_count = SecondaryMap::with_default(0);
-        let mut block_succs: SmallVec<[LoweredBlock2; 128]> = SmallVec::new();
+        let mut block_succs: SmallVec<[LoweredBlock; 128]> = SmallVec::new();
         let mut block_succ_range = SecondaryMap::with_default(0..0);
         let mut indirect_branch_target_clif_blocks = FxHashSet::default();
 
@@ -259,7 +146,7 @@ impl BlockLoweringOrder {
             visit_block_succs(f, block, |_, succ, from_table| {
                 block_out_count[block] += 1;
                 block_in_count[succ] += 1;
-                block_succs.push(LoweredBlock2::Orig { block: succ });
+                block_succs.push(LoweredBlock::Orig { block: succ });
 
                 if from_table {
                     indirect_branch_target_clif_blocks.insert(succ);
@@ -273,13 +160,13 @@ impl BlockLoweringOrder {
         // lowering order, identifying critical edges to split along the way.
 
         let mut lb_to_bindex = FxHashMap::default();
-        let mut lowering_order = Vec::new();
+        let mut lowered_order = Vec::new();
 
         for &block in domtree.cfg_postorder().iter().rev() {
-            let lb = LoweredBlock2::Orig { block };
-            let bindex = BlockIndex::new(lowering_order.len());
+            let lb = LoweredBlock::Orig { block };
+            let bindex = BlockIndex::new(lowered_order.len());
             lb_to_bindex.insert(lb.clone(), bindex);
-            lowering_order.push(lb);
+            lowered_order.push(lb);
 
             if block_out_count[block] > 1 {
                 let range = block_succ_range[block].clone();
@@ -287,34 +174,32 @@ impl BlockLoweringOrder {
                     let succ = lb.orig_block().unwrap();
                     if block_in_count[succ] > 1 {
                         // Mutate the successor to be a critical edge now.
-                        *lb = LoweredBlock2::CriticalEdge { pred: block, succ };
-                        let bindex = BlockIndex::new(lowering_order.len());
+                        *lb = LoweredBlock::CriticalEdge { pred: block, succ };
+                        let bindex = BlockIndex::new(lowered_order.len());
                         lb_to_bindex.insert(*lb, bindex);
-                        lowering_order.push(*lb);
+                        lowered_order.push(*lb);
                     }
                 }
             }
         }
 
-        trace!("domtree postorder: {:?}", domtree.cfg_postorder());
-        trace!("lowering order: {:?}", lowering_order);
-
         // Step 3: build the successor tables given the lowering order. We can't perform this step
         // during the creation of `lowering_order`, as we need `lb_to_bindex` to be fully populated
         // first.
-        let mut lowering_succs = Vec::new();
+        let mut lowered_succ_indices = Vec::new();
         let mut cold_blocks = FxHashSet::default();
         let mut indirect_branch_targets = FxHashSet::default();
-        let lowering_succ_ranges =
-            Vec::from_iter(lowering_order.iter().enumerate().map(|(ix, lb)| {
+        let lowered_succ_ranges =
+            Vec::from_iter(lowered_order.iter().enumerate().map(|(ix, lb)| {
                 let bindex = BlockIndex::new(ix);
-                let start = lowering_succs.len();
-                match lb {
+                let start = lowered_succ_indices.len();
+                let opt_inst = match lb {
                     // Block successors are pulled directly over, as they'll have been mutated when
                     // determining the block order already.
-                    &LoweredBlock2::Orig { block } => {
+                    &LoweredBlock::Orig { block } => {
                         let range = block_succ_range[block].clone();
-                        lowering_succs.extend(block_succs[range].iter().map(|lb| lb_to_bindex[lb]));
+                        lowered_succ_indices
+                            .extend(block_succs[range].iter().map(|lb| lb_to_bindex[lb]));
 
                         if f.layout.is_cold(block) {
                             cold_blocks.insert(bindex);
@@ -323,13 +208,17 @@ impl BlockLoweringOrder {
                         if indirect_branch_target_clif_blocks.contains(&block) {
                             indirect_branch_targets.insert(bindex);
                         }
+
+                        f.layout
+                            .last_inst(block)
+                            .filter(|inst| f.dfg.insts[*inst].opcode().is_branch())
                     }
 
                     // Critical edges won't have successor information in block_succ_range, but
                     // they only have a single known successor to record anyway.
-                    &LoweredBlock2::CriticalEdge { succ, .. } => {
-                        let succ_index = lb_to_bindex[&LoweredBlock2::Orig { block: succ }];
-                        lowering_succs.push(succ_index);
+                    &LoweredBlock::CriticalEdge { succ, .. } => {
+                        let succ_index = lb_to_bindex[&LoweredBlock::Orig { block: succ }];
+                        lowered_succ_indices.push(succ_index);
 
                         // Edges inherit indirect branch and cold block metadata from their
                         // successor.
@@ -341,292 +230,22 @@ impl BlockLoweringOrder {
                         if indirect_branch_target_clif_blocks.contains(&succ) {
                             indirect_branch_targets.insert(bindex);
                         }
+
+                        None
                     }
-                }
-                let end = lowering_succs.len();
-                start..end
+                };
+                let end = lowered_succ_indices.len();
+                (opt_inst, start..end)
             }));
-
-        trace!("ranges: {:?}", lowering_succ_ranges);
-        trace!("succs:  {:?}", lowering_succs);
-
-        //////
-
-        // Make sure that we have an entry block, and the entry block is
-        // not marked as cold. (The verifier ensures this as well, but
-        // the user may not have run the verifier, and this property is
-        // critical to avoid a miscompile, so we assert it here too.)
-        let entry = f.layout.entry_block().expect("Must have entry block");
-        assert!(!f.layout.is_cold(entry));
-
-        // Step 1: compute the in-edge and out-edge count of every block.
-        let mut block_in_count = SecondaryMap::with_default(0);
-        let mut block_out_count = SecondaryMap::with_default(0);
-
-        // Cache the block successors to avoid re-examining branches below.
-        let mut block_succs: SmallVec<[(Inst, usize, Block); 128]> = SmallVec::new();
-        let mut block_succ_range = SecondaryMap::with_default((0, 0));
-        let mut indirect_branch_target_clif_blocks = FxHashSet::default();
-
-        for block in f.layout.blocks() {
-            let block_succ_start = block_succs.len();
-            let mut succ_idx = 0;
-            visit_block_succs(f, block, |inst, succ, from_table| {
-                block_out_count[block] += 1;
-                block_in_count[succ] += 1;
-                block_succs.push((inst, succ_idx, succ));
-                succ_idx += 1;
-
-                if from_table {
-                    indirect_branch_target_clif_blocks.insert(succ);
-                }
-            });
-            let block_succ_end = block_succs.len();
-            block_succ_range[block] = (block_succ_start, block_succ_end);
-
-            if let Some(inst) = f.layout.last_inst(block) {
-                if f.dfg.insts[inst].opcode() == Opcode::Return {
-                    // Implicit output edge for any return.
-                    block_out_count[block] += 1;
-                }
-            }
-        }
-        // Implicit input edge for entry block.
-        block_in_count[entry] += 1;
-
-        // All blocks ending in conditional branches or br_tables must
-        // have edge-moves inserted at the top of successor blocks,
-        // not at the end of themselves. This is because the moves
-        // would have to be inserted prior to the branch's register
-        // use; but RA2's model is that the moves happen *on* the
-        // edge, after every def/use in the block. RA2 will check for
-        // "branch register use safety" and panic if such a problem
-        // occurs. To avoid this, we force the below algorithm to
-        // never merge the edge block onto the end of a block that
-        // ends in a conditional branch. We do this by "faking" more
-        // than one successor, even if there is only one.
-        //
-        // (One might ask, isn't that always the case already? It
-        // could not be, in cases of br_table with no table and just a
-        // default label, for example.)
-        for block in f.layout.blocks() {
-            if let Some(inst) = f.layout.last_inst(block) {
-                // If the block has a branch with any "fixed args"
-                // (not blockparam args) ...
-                if f.dfg.insts[inst].opcode().is_branch() && f.dfg.inst_fixed_args(inst).len() > 0 {
-                    // ... then force a minimum successor count of
-                    // two, so the below algorithm cannot put
-                    // edge-moves on the end of the block.
-                    block_out_count[block] = std::cmp::max(2, block_out_count[block]);
-                }
-            }
-        }
-
-        // Here we define the implicit CLIF-plus-edges graph. There are
-        // conceptually two such graphs: the original, with every edge explicit,
-        // and the merged one, with blocks (represented by `LoweredBlock`
-        // values) that contain original CLIF blocks, edges, or both. This
-        // function returns a lowered block's successors as per the latter, with
-        // consideration to edge-block merging.
-        //
-        // Note that there is a property of the block-merging rules below
-        // that is very important to ensure we don't miss any lowered blocks:
-        // any block in the implicit CLIF-plus-edges graph will *only* be
-        // included in one block in the merged graph.
-        //
-        // This, combined with the property that every edge block is reachable
-        // only from one predecessor (and hence cannot be reached by a DFS
-        // backedge), means that it is sufficient in our DFS below to track
-        // visited-bits per original CLIF block only, not per edge. This greatly
-        // simplifies the data structures (no need to keep a sparse hash-set of
-        // (block, block) tuples).
-        let compute_lowered_succs = |ret: &mut Vec<(Inst, LoweredBlock)>, block: LoweredBlock| {
-            let start_idx = ret.len();
-            match block {
-                LoweredBlock::Orig { block } | LoweredBlock::EdgeAndOrig { block, .. } => {
-                    // At an orig block; successors are always edge blocks,
-                    // possibly with orig blocks following.
-                    let range = block_succ_range[block];
-                    for &(edge_inst, succ_idx, succ) in &block_succs[range.0..range.1] {
-                        if block_in_count[succ] == 1 {
-                            ret.push((
-                                edge_inst,
-                                LoweredBlock::EdgeAndOrig {
-                                    pred: block,
-                                    edge_inst,
-                                    succ_idx,
-                                    block: succ,
-                                },
-                            ));
-                        } else {
-                            ret.push((
-                                edge_inst,
-                                LoweredBlock::Edge {
-                                    pred: block,
-                                    edge_inst,
-                                    succ_idx,
-                                    succ,
-                                },
-                            ));
-                        }
-                    }
-                }
-                LoweredBlock::Edge {
-                    succ, edge_inst, ..
-                }
-                | LoweredBlock::OrigAndEdge {
-                    succ, edge_inst, ..
-                } => {
-                    // At an edge block; successors are always orig blocks,
-                    // possibly with edge blocks following.
-                    if block_out_count[succ] == 1 {
-                        let range = block_succ_range[succ];
-                        // check if the one succ is a real CFG edge (vs.
-                        // implicit return succ).
-                        if range.1 - range.0 > 0 {
-                            debug_assert!(range.1 - range.0 == 1);
-                            let (succ_edge_inst, succ_succ_idx, succ_succ) = block_succs[range.0];
-                            ret.push((
-                                edge_inst,
-                                LoweredBlock::OrigAndEdge {
-                                    block: succ,
-                                    edge_inst: succ_edge_inst,
-                                    succ_idx: succ_succ_idx,
-                                    succ: succ_succ,
-                                },
-                            ));
-                        } else {
-                            ret.push((edge_inst, LoweredBlock::Orig { block: succ }));
-                        }
-                    } else {
-                        ret.push((edge_inst, LoweredBlock::Orig { block: succ }));
-                    }
-                }
-            }
-            let end_idx = ret.len();
-            (start_idx, end_idx)
-        };
-
-        // Build the explicit LoweredBlock-to-LoweredBlock successors list.
-        let mut lowered_succs = vec![];
-        let mut lowered_succ_indices = vec![];
-
-        // Step 2: Compute RPO traversal of the implicit CLIF-plus-edge-block graph. Use an
-        // explicit stack so we don't overflow the real stack with a deep DFS.
-        #[derive(Debug)]
-        struct StackEntry {
-            this: LoweredBlock,
-            succs: (usize, usize), // range in lowered_succs
-            cur_succ: usize,       // index in lowered_succs
-        }
-
-        let mut stack: SmallVec<[StackEntry; 16]> = SmallVec::new();
-        let mut visited = FxHashSet::default();
-        let mut postorder = vec![];
-
-        // Add the entry block.
-        //
-        // FIXME(cfallin): we might be able to use OrigAndEdge. Find a
-        // way to not special-case the entry block here.
-        let block = LoweredBlock::Orig { block: entry };
-        visited.insert(block);
-        let range = compute_lowered_succs(&mut lowered_succs, block);
-        lowered_succ_indices.resize(lowered_succs.len(), 0);
-        stack.push(StackEntry {
-            this: block,
-            succs: range,
-            cur_succ: range.1,
-        });
-
-        while !stack.is_empty() {
-            let stack_entry = stack.last_mut().unwrap();
-            let range = stack_entry.succs;
-            if stack_entry.cur_succ == range.0 {
-                postorder.push((stack_entry.this, range));
-                stack.pop();
-            } else {
-                // Heuristic: chase the children in reverse. This puts the first
-                // successor block first in RPO, all other things being equal,
-                // which tends to prioritize loop backedges over out-edges,
-                // putting the edge-block closer to the loop body and minimizing
-                // live-ranges in linear instruction space.
-                let next = lowered_succs[stack_entry.cur_succ - 1].1;
-                stack_entry.cur_succ -= 1;
-                if visited.contains(&next) {
-                    continue;
-                }
-                visited.insert(next);
-                let range = compute_lowered_succs(&mut lowered_succs, next);
-                lowered_succ_indices.resize(lowered_succs.len(), 0);
-                stack.push(StackEntry {
-                    this: next,
-                    succs: range,
-                    cur_succ: range.1,
-                });
-            }
-        }
-
-        postorder.reverse();
-        let rpo = postorder;
-
-        // Step 3: now that we have RPO, build the BlockIndex/BB fwd/rev maps.
-        let mut lowered_order = vec![];
-        let mut cold_blocks = FxHashSet::default();
-        let mut lowered_succ_ranges = vec![];
-        let mut lb_to_bindex = FxHashMap::default();
-        let mut indirect_branch_targets = FxHashSet::default();
-        for (block, succ_range) in rpo.into_iter() {
-            let index = BlockIndex::new(lowered_order.len());
-            lb_to_bindex.insert(block, index);
-            lowered_order.push(block);
-            lowered_succ_ranges.push(succ_range);
-
-            match block {
-                LoweredBlock::Orig { block }
-                | LoweredBlock::OrigAndEdge { block, .. }
-                | LoweredBlock::EdgeAndOrig { block, .. } => {
-                    if f.layout.is_cold(block) {
-                        cold_blocks.insert(index);
-                    }
-
-                    if indirect_branch_target_clif_blocks.contains(&block) {
-                        indirect_branch_targets.insert(index);
-                    }
-                }
-                LoweredBlock::Edge { pred, succ, .. } => {
-                    if f.layout.is_cold(pred) || f.layout.is_cold(succ) {
-                        cold_blocks.insert(index);
-                    }
-
-                    if indirect_branch_target_clif_blocks.contains(&succ) {
-                        indirect_branch_targets.insert(index);
-                    }
-                }
-            }
-        }
-
-        let lowered_succ_indices = lowered_succs
-            .iter()
-            .map(|&(inst, succ)| (inst, lb_to_bindex.get(&succ).cloned().unwrap()))
-            .collect();
-
-        let mut orig_map = SecondaryMap::with_default(None);
-        for (i, lb) in lowered_order.iter().enumerate() {
-            let i = BlockIndex::new(i);
-            if let Some(b) = lb.orig_block() {
-                orig_map[b] = Some(i);
-            }
-        }
 
         let result = BlockLoweringOrder {
             lowered_order,
-            lowered_succs,
             lowered_succ_indices,
             lowered_succ_ranges,
-            orig_map,
             cold_blocks,
             indirect_branch_targets,
         };
+
         trace!("BlockLoweringOrder: {:?}", result);
         result
     }
@@ -637,9 +256,9 @@ impl BlockLoweringOrder {
     }
 
     /// Get the successor indices for a lowered block.
-    pub fn succ_indices(&self, block: BlockIndex) -> &[(Inst, BlockIndex)] {
-        let range = self.lowered_succ_ranges[block.index()];
-        &self.lowered_succ_indices[range.0..range.1]
+    pub fn succ_indices(&self, block: BlockIndex) -> (Option<Inst>, &[BlockIndex]) {
+        let (opt_inst, range) = &self.lowered_succ_ranges[block.index()];
+        (opt_inst.clone(), &self.lowered_succ_indices[range.clone()])
     }
 
     /// Determine whether the given lowered-block index is cold.
