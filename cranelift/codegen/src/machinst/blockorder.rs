@@ -274,11 +274,11 @@ impl BlockLoweringOrder {
         let mut lowering_order = Vec::new();
 
         for &block in domtree.cfg_postorder().iter().rev() {
-            let bindex = BlockIndex::new(lowering_order.len());
             let lb = LoweredBlock2::Orig { block };
+            let bindex = BlockIndex::new(lowering_order.len());
             lb_to_bindex.insert(lb.clone(), bindex);
-
             lowering_order.push(lb);
+
             if block_out_count[block] > 1 {
                 let range = block_succ_range[block].clone();
                 for lb in &mut block_succs[range] {
@@ -301,8 +301,7 @@ impl BlockLoweringOrder {
         // during the creation of `lowering_order`, as we need `lb_to_bindex` to be fully populated
         // first.
         let mut lowering_succs = Vec::new();
-        let mut lowering_succ_ranges = Vec::new();
-        for lb in lowering_order.iter() {
+        let lowering_succ_ranges = Vec::from_iter(lowering_order.iter().map(|lb| {
             let start = lowering_succs.len();
             match lb {
                 // Block successors are pulled directly over, as they'll have been mutated when
@@ -320,8 +319,8 @@ impl BlockLoweringOrder {
                 }
             }
             let end = lowering_succs.len();
-            lowering_succ_ranges.push(start..end);
-        }
+            start..end
+        }));
 
         trace!("ranges: {:?}", lowering_succ_ranges);
         trace!("succs:  {:?}", lowering_succs);
