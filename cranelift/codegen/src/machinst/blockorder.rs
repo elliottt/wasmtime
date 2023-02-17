@@ -69,6 +69,7 @@
 //! branch editing that in practice elides empty blocks and simplifies some of
 //! the other redundancies that this scheme produces.
 
+use crate::dominator_tree::DominatorTree;
 use crate::entity::SecondaryMap;
 use crate::fx::{FxHashMap, FxHashSet};
 use crate::inst_predicates::visit_block_succs;
@@ -108,6 +109,24 @@ pub struct BlockLoweringOrder {
     cold_blocks: FxHashSet<BlockIndex>,
     /// Lowered blocks that are indirect branch targets.
     indirect_branch_targets: FxHashSet<BlockIndex>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LoweredBlock2 {
+    /// Block in original CLIF.
+    Orig {
+        /// Original CLIF block.
+        block: Block
+    },
+
+    /// Critical edge between two CLIF blocks.
+    CriticalEdge {
+        /// The predecessor block.
+        pred: Block,
+
+        /// The successor block.
+        succ: Block,
+    }
 }
 
 /// The origin of a block in the lowered block-order: either an original CLIF
@@ -215,8 +234,55 @@ impl LoweredBlock {
 
 impl BlockLoweringOrder {
     /// Compute and return a lowered block order for `f`.
-    pub fn new(f: &Function) -> BlockLoweringOrder {
+    pub fn new(f: &Function, domtree: &DominatorTree) -> BlockLoweringOrder {
         trace!("BlockLoweringOrder: function body {:?}", f);
+
+        // Step 1: compute the in-edge and out-edge count of every block.
+        let mut block_in_count = SecondaryMap::with_default(0);
+        let mut block_out_count = SecondaryMap::with_default(0);
+        let mut block_succs: SmallVec<[Block; 128]> = SmallVec::new();
+        let mut block_succ_range = SecondaryMap::with_default((0, 0));
+
+        for block in f.layout.blocks() {
+            let start = block_succs.len();
+            if let Some(inst) = f.layout.last_inst(block) {
+                for branch in f.dfg.insts[inst].branch_destination(&f.dfg.jump_tables) {
+                    let succ = branch.block(&f.dfg.value_lists);
+                    block_out_count[block] += 1;
+                    block_in_count[succ] += 1;
+                    block_succs.push(succ);
+                }
+            }
+            let end = block_succs.len();
+            block_succ_range[block] = (start, end);
+        }
+
+        // Step 2: traverse the postorder from the domtree to produce our desired postorder,
+        // identifying critical edges to split along the way.
+
+        let mut lowering_order = Vec::new();
+        for &block in domtree.cfg_postorder().iter().rev() {
+            lowering_order.push(LoweredBlock2::Orig { block });
+
+            if block_out_count[block] <= 1 {
+                continue;
+            }
+
+            let (start, end) = block_succ_range[block];
+            let succs = &block_succs[start..end];
+            for &succ in succs {
+                if block_in_count[succ] == 1 {
+                    continue;
+                }
+
+                lowering_order.push(LoweredBlock2::CriticalEdge { pred: block, succ });
+            }
+        }
+
+        trace!("domtree postorder: {:?}", domtree.cfg_postorder());
+        trace!("lowering order: {:?}", lowering_order);
+
+        //////
 
         // Make sure that we have an entry block, and the entry block is
         // not marked as cold. (The verifier ensures this as well, but

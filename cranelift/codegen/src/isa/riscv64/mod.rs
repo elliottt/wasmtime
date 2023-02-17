@@ -1,5 +1,6 @@
 //! risc-v 64-bit Instruction Set Architecture.
 
+use crate::dominator_tree::DominatorTree;
 use crate::ir;
 use crate::ir::condcodes::IntCC;
 use crate::ir::Function;
@@ -56,11 +57,12 @@ impl Riscv64Backend {
     fn compile_vcode(
         &self,
         func: &Function,
+        domtree: &DominatorTree,
     ) -> CodegenResult<(VCode<inst::Inst>, regalloc2::Output)> {
         let emit_info = EmitInfo::new(self.flags.clone(), self.isa_flags.clone());
         let sigs = SigSet::new::<abi::Riscv64MachineDeps>(func, &self.flags)?;
         let abi = abi::Riscv64Callee::new(func, self, &self.isa_flags, &sigs)?;
-        compile::compile::<Riscv64Backend>(func, self, abi, emit_info, sigs)
+        compile::compile::<Riscv64Backend>(func, domtree, self, abi, emit_info, sigs)
     }
 }
 
@@ -68,9 +70,10 @@ impl TargetIsa for Riscv64Backend {
     fn compile_function(
         &self,
         func: &Function,
+        domtree: &DominatorTree,
         want_disasm: bool,
     ) -> CodegenResult<CompiledCodeStencil> {
-        let (vcode, regalloc_result) = self.compile_vcode(func)?;
+        let (vcode, regalloc_result) = self.compile_vcode(func, domtree)?;
 
         let want_disasm = want_disasm || log::log_enabled!(log::Level::Debug);
         let emit_result = vcode.emit(

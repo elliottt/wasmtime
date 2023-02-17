@@ -1,5 +1,6 @@
 //! ARM 64-bit Instruction Set Architecture.
 
+use crate::dominator_tree::DominatorTree;
 use crate::ir::condcodes::IntCC;
 use crate::ir::{Function, Type};
 use crate::isa::aarch64::settings as aarch64_settings;
@@ -56,11 +57,12 @@ impl AArch64Backend {
     fn compile_vcode(
         &self,
         func: &Function,
+        domtree: &DominatorTree,
     ) -> CodegenResult<(VCode<inst::Inst>, regalloc2::Output)> {
         let emit_info = EmitInfo::new(self.flags.clone());
         let sigs = SigSet::new::<abi::AArch64MachineDeps>(func, &self.flags)?;
         let abi = abi::AArch64Callee::new(func, self, &self.isa_flags, &sigs)?;
-        compile::compile::<AArch64Backend>(func, self, abi, emit_info, sigs)
+        compile::compile::<AArch64Backend>(func, domtree, self, abi, emit_info, sigs)
     }
 }
 
@@ -68,9 +70,10 @@ impl TargetIsa for AArch64Backend {
     fn compile_function(
         &self,
         func: &Function,
+        domtree: &DominatorTree,
         want_disasm: bool,
     ) -> CodegenResult<CompiledCodeStencil> {
-        let (vcode, regalloc_result) = self.compile_vcode(func)?;
+        let (vcode, regalloc_result) = self.compile_vcode(func, domtree)?;
 
         let emit_result = vcode.emit(
             &regalloc_result,

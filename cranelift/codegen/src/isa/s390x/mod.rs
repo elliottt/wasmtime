@@ -1,5 +1,6 @@
 //! IBM Z 64-bit Instruction Set Architecture.
 
+use crate::dominator_tree::DominatorTree;
 use crate::ir::condcodes::IntCC;
 use crate::ir::{Function, Type};
 use crate::isa::s390x::settings as s390x_settings;
@@ -56,11 +57,12 @@ impl S390xBackend {
     fn compile_vcode(
         &self,
         func: &Function,
+        domtree: &DominatorTree,
     ) -> CodegenResult<(VCode<inst::Inst>, regalloc2::Output)> {
         let emit_info = EmitInfo::new(self.isa_flags.clone());
         let sigs = SigSet::new::<abi::S390xMachineDeps>(func, &self.flags)?;
         let abi = abi::S390xCallee::new(func, self, &self.isa_flags, &sigs)?;
-        compile::compile::<S390xBackend>(func, self, abi, emit_info, sigs)
+        compile::compile::<S390xBackend>(func, domtree, self, abi, emit_info, sigs)
     }
 }
 
@@ -68,10 +70,11 @@ impl TargetIsa for S390xBackend {
     fn compile_function(
         &self,
         func: &Function,
+        domtree: &DominatorTree,
         want_disasm: bool,
     ) -> CodegenResult<CompiledCodeStencil> {
         let flags = self.flags();
-        let (vcode, regalloc_result) = self.compile_vcode(func)?;
+        let (vcode, regalloc_result) = self.compile_vcode(func, domtree)?;
 
         let emit_result = vcode.emit(&regalloc_result, want_disasm, flags.machine_code_cfg_info());
         let frame_size = emit_result.frame_size;

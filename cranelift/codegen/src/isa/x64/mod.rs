@@ -3,6 +3,7 @@
 pub use self::inst::{args, EmitInfo, EmitState, Inst};
 
 use super::{OwnedTargetIsa, TargetIsa};
+use crate::dominator_tree::DominatorTree;
 use crate::ir::{condcodes::IntCC, Function, Type};
 #[cfg(feature = "unwind")]
 use crate::isa::unwind::systemv;
@@ -48,13 +49,14 @@ impl X64Backend {
     fn compile_vcode(
         &self,
         func: &Function,
+        domtree: &DominatorTree,
     ) -> CodegenResult<(VCode<inst::Inst>, regalloc2::Output)> {
         // This performs lowering to VCode, register-allocates the code, computes
         // block layout and finalizes branches. The result is ready for binary emission.
         let emit_info = EmitInfo::new(self.flags.clone(), self.x64_flags.clone());
         let sigs = SigSet::new::<abi::X64ABIMachineSpec>(func, &self.flags)?;
-        let abi = abi::X64Callee::new(&func, self, &self.x64_flags, &sigs)?;
-        compile::compile::<Self>(&func, self, abi, emit_info, sigs)
+        let abi = abi::X64Callee::new(func, self, &self.x64_flags, &sigs)?;
+        compile::compile::<Self>(func, domtree, self, abi, emit_info, sigs)
     }
 }
 
@@ -62,9 +64,10 @@ impl TargetIsa for X64Backend {
     fn compile_function(
         &self,
         func: &Function,
+        domtree: &DominatorTree,
         want_disasm: bool,
     ) -> CodegenResult<CompiledCodeStencil> {
-        let (vcode, regalloc_result) = self.compile_vcode(func)?;
+        let (vcode, regalloc_result) = self.compile_vcode(func, domtree)?;
 
         let emit_result = vcode.emit(
             &regalloc_result,
