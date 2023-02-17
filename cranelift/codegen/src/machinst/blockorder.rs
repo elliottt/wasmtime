@@ -209,9 +209,12 @@ impl BlockLoweringOrder {
                             indirect_branch_targets.insert(bindex);
                         }
 
-                        f.layout
-                            .last_inst(block)
-                            .filter(|inst| f.dfg.insts[*inst].opcode().is_branch())
+                        let last = f.layout.last_inst(block).unwrap();
+                        let opcode = f.dfg.insts[last].opcode();
+
+                        assert!(opcode.is_terminator());
+
+                        opcode.is_branch().then_some(last)
                     }
 
                     // Critical edges won't have successor information in block_succ_range, but
@@ -246,7 +249,7 @@ impl BlockLoweringOrder {
             indirect_branch_targets,
         };
 
-        trace!("BlockLoweringOrder: {:?}", result);
+        trace!("BlockLoweringOrder: {:#?}", result);
         result
     }
 
