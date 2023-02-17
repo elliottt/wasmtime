@@ -131,7 +131,7 @@ pub enum LoweredBlock2 {
 
 impl LoweredBlock2 {
     /// Unwrap an `Orig` block, or panic.
-    fn as_orig(&self) -> Option<Block> {
+    fn orig_block(&self) -> Option<Block> {
         match self {
             &LoweredBlock2::Orig { block } => Some(block),
             _ => None,
@@ -252,17 +252,19 @@ impl BlockLoweringOrder {
         let mut block_out_count = SecondaryMap::with_default(0);
         let mut block_succs: SmallVec<[LoweredBlock2; 128]> = SmallVec::new();
         let mut block_succ_range = SecondaryMap::with_default(0..0);
+        let mut indirect_branch_target_clif_blocks = FxHashSet::default();
 
         for block in f.layout.blocks() {
             let start = block_succs.len();
-            if let Some(inst) = f.layout.last_inst(block) {
-                for branch in f.dfg.insts[inst].branch_destination(&f.dfg.jump_tables) {
-                    let succ = branch.block(&f.dfg.value_lists);
-                    block_out_count[block] += 1;
-                    block_in_count[succ] += 1;
-                    block_succs.push(LoweredBlock2::Orig { block: succ });
+            visit_block_succs(f, block, |_, succ, from_table| {
+                block_out_count[block] += 1;
+                block_in_count[succ] += 1;
+                block_succs.push(LoweredBlock2::Orig { block: succ });
+
+                if from_table {
+                    indirect_branch_target_clif_blocks.insert(succ);
                 }
-            }
+            });
             let end = block_succs.len();
             block_succ_range[block] = start..end;
         }
@@ -282,7 +284,7 @@ impl BlockLoweringOrder {
             if block_out_count[block] > 1 {
                 let range = block_succ_range[block].clone();
                 for lb in &mut block_succs[range] {
-                    let succ = lb.as_orig().unwrap();
+                    let succ = lb.orig_block().unwrap();
                     if block_in_count[succ] > 1 {
                         // Mutate the successor to be a critical edge now.
                         *lb = LoweredBlock2::CriticalEdge { pred: block, succ };
@@ -301,26 +303,49 @@ impl BlockLoweringOrder {
         // during the creation of `lowering_order`, as we need `lb_to_bindex` to be fully populated
         // first.
         let mut lowering_succs = Vec::new();
-        let lowering_succ_ranges = Vec::from_iter(lowering_order.iter().map(|lb| {
-            let start = lowering_succs.len();
-            match lb {
-                // Block successors are pulled directly over, as they'll have been mutated when
-                // determining the block order already.
-                &LoweredBlock2::Orig { block } => {
-                    let range = block_succ_range[block].clone();
-                    lowering_succs.extend(block_succs[range].iter().map(|lb| lb_to_bindex[lb]));
-                }
+        let mut cold_blocks = FxHashSet::default();
+        let mut indirect_branch_targets = FxHashSet::default();
+        let lowering_succ_ranges =
+            Vec::from_iter(lowering_order.iter().enumerate().map(|(ix, lb)| {
+                let bindex = BlockIndex::new(ix);
+                let start = lowering_succs.len();
+                match lb {
+                    // Block successors are pulled directly over, as they'll have been mutated when
+                    // determining the block order already.
+                    &LoweredBlock2::Orig { block } => {
+                        let range = block_succ_range[block].clone();
+                        lowering_succs.extend(block_succs[range].iter().map(|lb| lb_to_bindex[lb]));
 
-                // Critical edges won't have successor information in block_succ_range, but they
-                // only have a single successor to record anyway.
-                &LoweredBlock2::CriticalEdge { succ, .. } => {
-                    let bindex = lb_to_bindex[&LoweredBlock2::Orig { block: succ }];
-                    lowering_succs.push(bindex);
+                        if f.layout.is_cold(block) {
+                            cold_blocks.insert(bindex);
+                        }
+
+                        if indirect_branch_target_clif_blocks.contains(&block) {
+                            indirect_branch_targets.insert(bindex);
+                        }
+                    }
+
+                    // Critical edges won't have successor information in block_succ_range, but
+                    // they only have a single known successor to record anyway.
+                    &LoweredBlock2::CriticalEdge { succ, .. } => {
+                        let succ_index = lb_to_bindex[&LoweredBlock2::Orig { block: succ }];
+                        lowering_succs.push(succ_index);
+
+                        // Edges inherit indirect branch and cold block metadata from their
+                        // successor.
+
+                        if f.layout.is_cold(succ) {
+                            cold_blocks.insert(bindex);
+                        }
+
+                        if indirect_branch_target_clif_blocks.contains(&succ) {
+                            indirect_branch_targets.insert(bindex);
+                        }
+                    }
                 }
-            }
-            let end = lowering_succs.len();
-            start..end
-        }));
+                let end = lowering_succs.len();
+                start..end
+            }));
 
         trace!("ranges: {:?}", lowering_succ_ranges);
         trace!("succs:  {:?}", lowering_succs);
