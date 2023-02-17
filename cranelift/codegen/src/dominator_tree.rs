@@ -314,6 +314,7 @@ impl DominatorTree {
                             for block in func.stencil.dfg.insts[inst]
                                 .branch_destination(&func.stencil.dfg.jump_tables)
                                 .iter()
+                                .rev()
                             {
                                 let succ = block.block(&func.stencil.dfg.value_lists);
 
