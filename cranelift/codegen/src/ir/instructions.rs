@@ -687,9 +687,11 @@ enum OperandConstraint {
     AsTruthy,
 
     /// This operand is `ctrlType.half_width()`.
+    #[allow(unused)]
     HalfWidth,
 
     /// This operand is `ctrlType.double_width()`.
+    #[allow(unused)]
     DoubleWidth,
 
     /// This operand is `ctrlType.split_lanes()`.
