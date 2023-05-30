@@ -158,6 +158,11 @@ macro_rules! newtype_of_reg {
                     self.0.get_operands(collector);
                 }
             }
+            impl PrettyPrint for WithSizeDirective<&$newtype_reg_mem> {
+                fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
+                    WithSizeDirective(&self.0.0).pretty_print(size, allocs)
+                }
+            }
             impl PrettyPrint for $newtype_reg_mem {
                 fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
                     self.0.pretty_print(size, allocs)
@@ -219,6 +224,12 @@ macro_rules! newtype_of_reg {
                     collector: &mut OperandCollector<'_, F>,
                 ) {
                     self.0.get_operands(collector);
+                }
+            }
+
+            impl PrettyPrint for WithSizeDirective<&$newtype_reg_mem_imm> {
+                fn pretty_print(&self, size: u8, allocs: &mut allocationConsumer<'_>) -> String {
+                    WithSizeDirective(&self.0.0).pretty_print(size, allocs)
                 }
             }
 
@@ -450,28 +461,17 @@ impl Amode {
     }
 }
 
-fn pretty_print_amode_ptr(size: u8) -> &'static str {
-    match size {
-        1 => "byte",
-        2 => "word",
-        4 => "dword",
-        8 => "qword",
-        16 => "xmmword",
-        _ => panic!("Unhandled operand size: {}", size),
-    }
-}
-
-impl PrettyPrint for Amode {
+impl PrettyPrint for WithSizeDirective<&Amode> {
     fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
-        match self {
+        match self.0 {
             Amode::ImmReg { simm32, base, .. } => {
                 let imm32 = *simm32 as i32;
                 let op = if imm32 < 0 { "-" } else { "+" };
                 // Note: size is always 8; the address is 64 bits,
                 // even if the addressed operand is smaller.
                 format!(
-                    "{} ptr [{} {op} {:#x}]",
-                    pretty_print_amode_ptr(size),
+                    "{} [{} {op} {:#x}]",
+                    Self::pretty_print_size_directive(size),
                     pretty_print_reg(*base, 8, allocs),
                     imm32.abs(),
                 )
@@ -495,8 +495,51 @@ impl PrettyPrint for Amode {
                     format!(" {} {}", if imm32 < 0 { "-" } else { "+" }, imm32.abs())
                 };
                 format!(
-                    "{} ptr [{} + {}{shift}{disp}]",
-                    pretty_print_amode_ptr(size),
+                    "{} [{} + {}{shift}{disp}]",
+                    Self::pretty_print_size_directive(size),
+                    pretty_print_reg(base.to_reg(), 8, allocs),
+                    pretty_print_reg(index.to_reg(), 8, allocs),
+                )
+            }
+            Amode::RipRelative { ref target } => format!("label{}(%rip)", target.get()),
+        }
+    }
+}
+
+impl PrettyPrint for Amode {
+    fn pretty_print(&self, _size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
+        match self {
+            Amode::ImmReg { simm32, base, .. } => {
+                let imm32 = *simm32 as i32;
+                let op = if imm32 < 0 { "-" } else { "+" };
+                // Note: size is always 8; the address is 64 bits,
+                // even if the addressed operand is smaller.
+                format!(
+                    "[{} {op} {:#x}]",
+                    pretty_print_reg(*base, 8, allocs),
+                    imm32.abs(),
+                )
+            }
+            Amode::ImmRegRegShift {
+                simm32,
+                base,
+                index,
+                shift,
+                ..
+            } => {
+                let shift = if *shift == 0 {
+                    "".into()
+                } else {
+                    format!(" * {}", 1 << shift)
+                };
+                let imm32 = *simm32 as i32;
+                let disp = if imm32 == 0 {
+                    "".into()
+                } else {
+                    format!(" {} {}", if imm32 < 0 { "-" } else { "+" }, imm32.abs())
+                };
+                format!(
+                    "[{} + {}{shift}{disp}]",
                     pretty_print_reg(base.to_reg(), 8, allocs),
                     pretty_print_reg(index.to_reg(), 8, allocs),
                 )
@@ -610,6 +653,49 @@ impl Into<SyntheticAmode> for VCodeConstant {
     }
 }
 
+/// A newtype wrapper for configuring the pretty-printer to output size-directives when printing
+/// a `SyntheticAmode` or `Amode` value.
+pub struct WithSizeDirective<T>(pub T);
+
+impl<T> WithSizeDirective<T> {
+    /// Pretty-print the size directive for a given size.
+    pub fn pretty_print_size_directive(size: u8) -> String {
+        format!(
+            "{} ptr",
+            match size {
+                1 => "byte",
+                2 => "word",
+                4 => "dword",
+                8 => "qword",
+                16 => "xmmword",
+                _ => panic!("Unhandled operand size: {}", size),
+            }
+        )
+    }
+}
+
+impl PrettyPrint for WithSizeDirective<&SyntheticAmode> {
+    fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
+        match self.0 {
+            // See note in `Amode` regarding constant size of `8`.
+            SyntheticAmode::Real(addr) => {
+                WithSizeDirective(addr).pretty_print(size, allocs)
+            }
+            SyntheticAmode::NominalSPOffset { simm32 } => {
+                let size = Self::pretty_print_size_directive(size);
+                if *simm32 == 0 {
+                    format!("{} [rsp]", size)
+                } else {
+                    let imm32 = *simm32 as i32;
+                    let op = if imm32 < 0 { "-" } else { "+" };
+                    format!("{} [rsp {op} {:#x}]", size, imm32.abs())
+                }
+            }
+            SyntheticAmode::ConstantOffset(c) => format!("const({})", c.as_u32()),
+        }
+    }
+}
+
 impl PrettyPrint for SyntheticAmode {
     fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
         match self {
@@ -617,15 +703,11 @@ impl PrettyPrint for SyntheticAmode {
             SyntheticAmode::Real(addr) => addr.pretty_print(size, allocs),
             SyntheticAmode::NominalSPOffset { simm32 } => {
                 if *simm32 == 0 {
-                    format!("{} ptr [rsp]", pretty_print_amode_ptr(size))
+                    "[rsp]".into()
                 } else {
                     let imm32 = *simm32 as i32;
                     let op = if imm32 < 0 { "-" } else { "+" };
-                    format!(
-                        "{} ptr [rsp {op} {:#x}]",
-                        pretty_print_amode_ptr(size),
-                        imm32.abs()
-                    )
+                    format!("[rsp {op} {:#x}]", imm32.abs())
                 }
             }
             SyntheticAmode::ConstantOffset(c) => format!("const({})", c.as_u32()),
@@ -710,6 +792,16 @@ impl From<RegMem> for RegMemImm {
         match rm {
             RegMem::Reg { reg } => RegMemImm::Reg { reg },
             RegMem::Mem { addr } => RegMemImm::Mem { addr },
+        }
+    }
+}
+
+impl PrettyPrint for WithSizeDirective<&RegMemImm> {
+    fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
+        match self.0 {
+            RegMemImm::Reg { reg } => pretty_print_reg(*reg, size, allocs),
+            RegMemImm::Mem { addr } => WithSizeDirective(addr).pretty_print(size, allocs),
+            RegMemImm::Imm { simm32 } => format!("${}", *simm32 as i32),
         }
     }
 }
@@ -816,6 +908,15 @@ impl From<Reg> for RegMem {
 impl From<Writable<Reg>> for RegMem {
     fn from(r: Writable<Reg>) -> Self {
         RegMem::reg(r.to_reg())
+    }
+}
+
+impl PrettyPrint for WithSizeDirective<&RegMem> {
+    fn pretty_print(&self, size: u8, allocs: &mut AllocationConsumer<'_>) -> String {
+        match self.0 {
+            RegMem::Reg { reg } => pretty_print_reg(*reg, size, allocs),
+            RegMem::Mem { addr, .. } => WithSizeDirective(addr).pretty_print(size, allocs),
+        }
     }
 }
 

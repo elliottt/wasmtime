@@ -658,7 +658,7 @@ impl PrettyPrint for Inst {
                 let size_bytes = size.to_bytes();
                 let src1 = pretty_print_reg(src1.to_reg(), size_bytes, allocs);
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), size_bytes, allocs);
-                let src2 = src2.pretty_print(size_bytes, allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(size_bytes, allocs);
                 format!("{op:#} {dst}, {src1}, {src2}")
             }
             Inst::AluConstOp { op, dst, size } => {
@@ -674,7 +674,7 @@ impl PrettyPrint for Inst {
             } => {
                 let size_bytes = size.to_bytes();
                 let src2 = pretty_print_reg(src2.to_reg(), size_bytes, allocs);
-                let src1_dst = src1_dst.pretty_print(size_bytes, allocs);
+                let src1_dst = WithSizeDirective(src1_dst).pretty_print(size_bytes, allocs);
                 format!("{op:#} {src1_dst}, {src2}")
             }
             Inst::AluRmRVex {
@@ -692,7 +692,7 @@ impl PrettyPrint for Inst {
             }
             Inst::UnaryRmR { src, dst, op, size } => {
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), size.to_bytes(), allocs);
-                let src = src.pretty_print(size.to_bytes(), allocs);
+                let src = WithSizeDirective(src).pretty_print(size.to_bytes(), allocs);
                 format!("{op:#} {dst}, {src}")
             }
 
@@ -769,7 +769,7 @@ impl PrettyPrint for Inst {
                 let src1 = pretty_print_reg(src1.to_reg(), size.to_bytes(), allocs);
                 let dst_lo = pretty_print_reg(dst_lo.to_reg().to_reg(), size.to_bytes(), allocs);
                 let dst_hi = pretty_print_reg(dst_hi.to_reg().to_reg(), size.to_bytes(), allocs);
-                let src2 = src2.pretty_print(size.to_bytes(), allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(size.to_bytes(), allocs);
                 format!(
                     "{} {dst_lo}, {dst_hi}, {src1}, {src2}",
                     if *signed { "imul" } else { "mul" },
@@ -784,7 +784,7 @@ impl PrettyPrint for Inst {
             } => {
                 let src1 = pretty_print_reg(src1.to_reg(), size.to_bytes(), allocs);
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), size.to_bytes(), allocs);
-                let src2 = src2.pretty_print(size.to_bytes(), allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(size.to_bytes(), allocs);
                 format!("mul {dst}, {src1}, {src2}")
             }
 
@@ -876,13 +876,13 @@ impl PrettyPrint for Inst {
 
             Inst::XmmMovRM { op, src, dst, .. } => {
                 let src = pretty_print_reg(src.to_reg(), 8, allocs);
-                let dst = dst.pretty_print(16, allocs);
+                let dst = WithSizeDirective(dst).pretty_print(16, allocs);
                 format!("{op:#} {dst}, {src}")
             }
 
             Inst::XmmMovRMVex { op, src, dst, .. } => {
                 let src = pretty_print_reg(src.to_reg(), 8, allocs);
-                let dst = dst.pretty_print(16, allocs);
+                let dst = WithSizeDirective(dst).pretty_print(16, allocs);
                 format!("{op:#} {dst}, {src}")
             }
 
@@ -890,7 +890,7 @@ impl PrettyPrint for Inst {
                 op, src, dst, imm, ..
             } => {
                 let src = pretty_print_reg(src.to_reg(), 8, allocs);
-                let dst = dst.pretty_print(8, allocs);
+                let dst = WithSizeDirective(dst).pretty_print(8, allocs);
                 format!("{op:#} {dst}, {src}, {imm:#x}")
             }
 
@@ -898,7 +898,7 @@ impl PrettyPrint for Inst {
                 op, src, dst, imm, ..
             } => {
                 let src = pretty_print_reg(src.to_reg(), 8, allocs);
-                let dst = dst.pretty_print(8, allocs);
+                let dst = WithSizeDirective(dst).pretty_print(16, allocs);
                 format!("{op:#} {dst}, {src}, {imm}")
             }
 
@@ -911,7 +911,7 @@ impl PrettyPrint for Inst {
             } => {
                 let src1 = pretty_print_reg(src1.to_reg(), 8, allocs);
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), 8, allocs);
-                let src2 = src2.pretty_print(8, allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(16, allocs);
                 format!("{op:#} {dst}, {src1}, {src2}")
             }
 
@@ -924,7 +924,7 @@ impl PrettyPrint for Inst {
             } => {
                 let src1 = pretty_print_reg(src1.to_reg(), 8, allocs);
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), 8, allocs);
-                let src2 = src2.pretty_print(16, allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(16, allocs);
                 format!("{op:#} {dst}, {src1}, {src2}")
             }
 
@@ -944,7 +944,7 @@ impl PrettyPrint for Inst {
                     String::new()
                 };
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), 8, allocs);
-                let src2 = src2.pretty_print(8, allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(16, allocs);
                 format!("{op:#} {dst}{mask}, {src1}, {src2}")
             }
 
@@ -957,7 +957,7 @@ impl PrettyPrint for Inst {
             } => {
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), 8, allocs);
                 let src1 = pretty_print_reg(src1.to_reg(), 8, allocs);
-                let src2 = src2.pretty_print(8, allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(8, allocs);
                 format!("{op:#} {dst}, {src1}, {src2}")
             }
 
@@ -971,7 +971,7 @@ impl PrettyPrint for Inst {
             } => {
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), 8, allocs);
                 let src1 = pretty_print_reg(src1.to_reg(), 8, allocs);
-                let src2 = src2.pretty_print(8, allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(16, allocs);
 
                 format!("{op:#} {dst}, {src1}, {src2}, {imm:#x}")
             }
@@ -986,7 +986,7 @@ impl PrettyPrint for Inst {
             } => {
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), 8, allocs);
                 let src1 = pretty_print_reg(src1.to_reg(), 8, allocs);
-                let src2 = src2.pretty_print(8, allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(8, allocs);
 
                 format!("{op:#} {dst}, {src1}, {src2}, {imm:#x}")
             }
@@ -1002,7 +1002,7 @@ impl PrettyPrint for Inst {
                 let src1 = pretty_print_reg(src1.to_reg(), 8, allocs);
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), 8, allocs);
                 let src2 = pretty_print_reg(src2.to_reg(), 8, allocs);
-                let src3 = src3.pretty_print(8, allocs);
+                let src3 = WithSizeDirective(src3).pretty_print(16, allocs);
                 format!("{op:#} {dst}, {src1}, {src2}, {src3}")
             }
 
@@ -1241,7 +1241,7 @@ impl PrettyPrint for Inst {
             }
 
             Inst::MovImmM { size, simm64, dst } => {
-                let dst = dst.pretty_print(size.to_bytes(), allocs);
+                let dst = WithSizeDirective(dst).pretty_print(size.to_bytes(), allocs);
                 match *size {
                     OperandSize::Size8 => {
                         format!("mov {dst}, {:#x}", (*simm64 as u8) as i8)
@@ -1287,7 +1287,7 @@ impl PrettyPrint for Inst {
                     ext_mode.dst_size()
                 };
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), dst_size, allocs);
-                let src = src.pretty_print(ext_mode.src_size(), allocs);
+                let src = WithSizeDirective(src).pretty_print(ext_mode.src_size(), allocs);
                 if *ext_mode == ExtMode::LQ {
                     format!("mov {dst}, {src}")
                 } else {
@@ -1297,7 +1297,7 @@ impl PrettyPrint for Inst {
 
             Inst::Mov64MR { src, dst, .. } => {
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), 8, allocs);
-                let src = src.pretty_print(8, allocs);
+                let src = WithSizeDirective(src).pretty_print(8, allocs);
                 format!("mov {dst}, {src}")
             }
 
@@ -1311,13 +1311,13 @@ impl PrettyPrint for Inst {
                 ext_mode, src, dst, ..
             } => {
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), ext_mode.dst_size(), allocs);
-                let src = src.pretty_print(ext_mode.src_size(), allocs);
+                let src = WithSizeDirective(src).pretty_print(ext_mode.src_size(), allocs);
                 format!("movsx {dst}, {src}")
             }
 
             Inst::MovRM { size, src, dst, .. } => {
                 let src = pretty_print_reg(src.to_reg(), size.to_bytes(), allocs);
-                let dst = dst.pretty_print(size.to_bytes(), allocs);
+                let dst = WithSizeDirective(dst).pretty_print(size.to_bytes(), allocs);
                 format!("mov {dst}, {src}")
             }
 
@@ -1352,7 +1352,7 @@ impl PrettyPrint for Inst {
             } => {
                 let src1 = pretty_print_reg(src1.to_reg(), 8, allocs);
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), 8, allocs);
-                let src2 = src2.pretty_print(8, allocs);
+                let src2 = WithSizeDirective(src2).pretty_print(8, allocs);
                 format!("{opcode:#} {dst}, {src1}, {src2}")
             }
 
@@ -1391,7 +1391,8 @@ impl PrettyPrint for Inst {
             } => {
                 let alternative = pretty_print_reg(alternative.to_reg(), size.to_bytes(), allocs);
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), size.to_bytes(), allocs);
-                let consequent = consequent.pretty_print(size.to_bytes(), allocs);
+                let consequent =
+                    WithSizeDirective(consequent).pretty_print(size.to_bytes(), allocs);
                 format!("cmov{cc:#} {dst}, {consequent}, {alternative}",)
             }
 
@@ -1406,7 +1407,7 @@ impl PrettyPrint for Inst {
                 let size = u8::try_from(ty.bytes()).unwrap();
                 let alternative = pretty_print_reg(alternative.to_reg(), size, allocs);
                 let dst = pretty_print_reg(dst.to_reg().to_reg(), size, allocs);
-                let consequent = consequent.pretty_print(size, allocs);
+                let consequent = WithSizeDirective(consequent).pretty_print(size, allocs);
                 let suffix = match *ty {
                     types::F64 => "sd",
                     types::F32 => "ss",
