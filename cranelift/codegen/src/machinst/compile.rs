@@ -70,6 +70,8 @@ pub fn compile<B: LowerBackend + TargetIsa>(
             .expect("register allocation")
     };
 
+    log::info!("ra2 stats:\n{:#?}", regalloc_result.stats);
+
     // Run the regalloc checker, if requested.
     if b.flags().regalloc_checker() {
         let _tt = timing::regalloc_checker();
