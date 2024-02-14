@@ -10,21 +10,20 @@ use core::cmp;
 use core::cmp::Ordering;
 use core::mem;
 
-/// RPO numbers are not first assigned in a contiguous way but as multiples of STRIDE, to leave
-/// room for modifications of the dominator tree.
-const STRIDE: u32 = 4;
-
 /// Special RPO numbers used during `compute_postorder`.
 const SEEN: u32 = 1;
+
+/// Special RPO numbers used during `compute_postorder`.
+const UNVISITED: u32 = 0;
 
 /// Dominator tree node. We keep one of these per block.
 #[derive(Clone, Default)]
 struct DomNode {
-    /// Number of this node in a reverse post-order traversal of the CFG, starting from 1.
-    /// This number is monotonic in the reverse postorder but not contiguous, since we leave
-    /// holes for later localized modifications of the dominator tree.
-    /// Unreachable nodes get number 0, all others are positive.
-    rpo_number: u32,
+    /// Number of this node in a reverse post-order traversal of the CFG, starting from 1. This
+    /// number is monotonic in the reverse postorder. Unreachable nodes get number 0, all others
+    /// are positive.
+    /// TODO: describe SEEN?
+    po_number: u32,
 
     /// The immediate dominator of this block, represented as the branch or jump instruction at the
     /// end of the dominating basic block.
@@ -57,7 +56,7 @@ pub struct DominatorTree {
 impl DominatorTree {
     /// Is `block` reachable from the entry block?
     pub fn is_reachable(&self, block: Block) -> bool {
-        self.nodes[block].rpo_number != 0
+        self.nodes[block].po_number != 0
     }
 
     /// Get the CFG post-order of blocks that was used to compute the dominator tree.
@@ -89,7 +88,7 @@ impl DominatorTree {
 
     /// Compare two blocks relative to the reverse post-order.
     pub fn rpo_cmp_block(&self, a: Block, b: Block) -> Ordering {
-        self.nodes[a].rpo_number.cmp(&self.nodes[b].rpo_number)
+        self.nodes[b].po_number.cmp(&self.nodes[a].po_number)
     }
 
     /// Compare two program points relative to a reverse post-order traversal of the control-flow
@@ -154,11 +153,11 @@ impl DominatorTree {
                 Some(inst),
             ),
         };
-        let rpo_a = self.nodes[a].rpo_number;
+        let po_a = self.nodes[a].po_number;
 
         // Run a finger up the dominator tree from b until we see a.
         // Do nothing if b is unreachable.
-        while rpo_a < self.nodes[block_b].rpo_number {
+        while self.nodes[block_b].po_number < po_a{
             let idom = match self.idom(block_b) {
                 Some(idom) => idom,
                 None => return None, // a is unreachable, so we climbed past the entry
@@ -291,9 +290,9 @@ impl DominatorTree {
         //
         // During this algorithm only, use `rpo_number` to hold the following state:
         //
-        //   0:    block has not yet had its first visit
-        //   SEEN: block has been visited at least once, implying that all of its successors are on
-        //         the stack
+        //   UNVISITED: block has not yet had its first visit
+        //   SEEN:      block has been visited at least once, implying that all of its successors
+        //              are on the stack
 
         match func.layout.entry_block() {
             Some(block) => {
@@ -302,13 +301,16 @@ impl DominatorTree {
             None => return,
         }
 
+        // TODO: document why 1 is ok
+        let mut po_idx = 1;
+
         while let Some((visit, block)) = self.stack.pop() {
             match visit {
                 Visit::First => {
-                    if self.nodes[block].rpo_number == 0 {
+                    if self.nodes[block].po_number == UNVISITED {
                         // This is the first time we pop the block, so we need to scan its
                         // successors and then revisit it.
-                        self.nodes[block].rpo_number = SEEN;
+                        self.nodes[block].po_number = SEEN;
                         self.stack.push((Visit::Last, block));
                         if let Some(inst) = func.stencil.layout.last_inst(block) {
                             // Heuristic: chase the children in reverse. This puts the first
@@ -329,7 +331,7 @@ impl DominatorTree {
                                 // the loop, and is not required; it's merely inlining the check
                                 // from the outer conditional of this case to avoid the extra loop
                                 // iteration.
-                                if self.nodes[succ].rpo_number == 0 {
+                                if self.nodes[succ].po_number == UNVISITED {
                                     self.stack.push((Visit::First, succ))
                                 }
                             }
@@ -340,6 +342,8 @@ impl DominatorTree {
                 Visit::Last => {
                     // We've finished all this node's successors.
                     self.postorder.push(block);
+                    self.nodes[block].po_number = po_idx;
+                    po_idx += 1;
                 }
             }
         }
@@ -362,22 +366,18 @@ impl DominatorTree {
         };
         debug_assert_eq!(Some(entry_block), func.layout.entry_block());
 
-        // Do a first pass where we assign RPO numbers to all reachable nodes.
-        self.nodes[entry_block].rpo_number = 2 * STRIDE;
-        for (rpo_idx, &block) in postorder.iter().rev().enumerate() {
+        // TODO: BIG description about why we're doing this
+        self.nodes[entry_block].idom = func.layout.last_inst(entry_block).into();
+
+        for &block in postorder.iter().rev() {
             // Update the current node and give it an RPO number.
-            // The entry block got 2, the rest start at 3 by multiples of STRIDE to leave
-            // room for future dominator tree modifications.
             //
             // Since `compute_idom` will only look at nodes with an assigned RPO number, the
             // function will never see an uninitialized predecessor.
             //
             // Due to the nature of the post-order traversal, every node we visit will have at
             // least one predecessor that has previously been visited during this RPO.
-            self.nodes[block] = DomNode {
-                idom: self.compute_idom(block, cfg, &func.layout).into(),
-                rpo_number: (rpo_idx as u32 + 3) * STRIDE,
-            }
+            self.nodes[block].idom = self.compute_idom(block, cfg, &func.layout).into();
         }
 
         // Now that we have RPO numbers for everything and initial immediate dominator estimates,
@@ -395,6 +395,9 @@ impl DominatorTree {
                 }
             }
         }
+
+        // TODO: BIG description about why this is cleared here
+        self.nodes[entry_block].idom = None.into();
     }
 
     // Compute the immediate dominator for `block` using the current `idom` states for the reachable
@@ -405,7 +408,7 @@ impl DominatorTree {
         // been visited yet, 0 for unreachable blocks.
         let mut reachable_preds = cfg
             .pred_iter(block)
-            .filter(|&BlockPredecessor { block: pred, .. }| self.nodes[pred].rpo_number > 1);
+            .filter(|&BlockPredecessor { block: pred, .. }| self.nodes[pred].idom.is_some());
 
         // The RPO must visit at least one predecessor before this node.
         let mut idom = reachable_preds
