@@ -19,3 +19,6 @@ mod stack;
 mod trampoline;
 pub use trampoline::TrampolineKind;
 mod visitor;
+
+#[cfg(feature = "component-model")]
+pub use trampoline::component::ComponentTrampolineKind;

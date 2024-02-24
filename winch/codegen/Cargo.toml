@@ -31,3 +31,4 @@ all-arch = [
     "x64",
     "arm64",
 ]
+component-model = []

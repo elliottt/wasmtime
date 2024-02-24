@@ -21,6 +21,9 @@ use smallvec::SmallVec;
 use std::mem;
 use wasmtime_environ::{FuncIndex, PtrSize, WasmFuncType, WasmValType};
 
+#[cfg(feature = "component-model")]
+pub mod component;
+
 /// The supported trampoline kinds.
 /// See <https://github.com/bytecodealliance/rfcs/blob/main/accepted/tail-calls.md#new-trampolines-and-vmcallercheckedanyfunc-changes>
 /// for more details.

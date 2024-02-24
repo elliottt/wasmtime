@@ -213,6 +213,19 @@ pub trait TargetIsa: Send + Sync {
         kind: TrampolineKind,
     ) -> Result<MachBufferFinalized<Final>>;
 
+    /// Compile a trampoline kind, in the context of a wasm component.
+    ///
+    /// This function, internally dispatches to the right trampoline to emit
+    /// depending on the `kind` paramter.
+    #[cfg(feature = "component-model")]
+    fn compile_component_trampoline(
+        &self,
+        component: &wasmtime_environ::component::ComponentTranslation,
+        types: &wasmtime_environ::component::ComponentTypesBuilder,
+        trampoline: wasmtime_environ::component::TrampolineIndex,
+        kind: crate::trampoline::component::ComponentTrampolineKind,
+    ) -> Result<MachBufferFinalized<Final>>;
+
     /// Returns the pointer width of the ISA in bytes.
     fn pointer_bytes(&self) -> u8 {
         let width = self.triple().pointer_width().unwrap();

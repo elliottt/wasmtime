@@ -22,5 +22,8 @@ wasmparser = { workspace = true }
 gimli = { workspace = true }
 
 [features]
-component-model = ["wasmtime-environ/component-model"]
+component-model = [
+  "wasmtime-environ/component-model",
+  "winch-codegen/component-model",
+]
 all-arch = ["winch-codegen/all-arch"]

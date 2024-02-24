@@ -142,6 +142,15 @@ impl TargetIsa for Aarch64 {
         todo!()
     }
 
+    #[cfg(feature = "component-model")]
+    fn compile_component_trampoline(
+        &self,
+        _ty: &WasmFuncType,
+        _kind: crate::trampoline::component::ComponentTrampolineKind,
+    ) -> Result<MachBufferFinalized<Final>> {
+        todo!()
+    }
+
     fn emit_unwind_info(
         &self,
         _result: &MachBufferFinalized<Final>,

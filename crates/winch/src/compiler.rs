@@ -13,6 +13,9 @@ use wasmtime_environ::{
 };
 use winch_codegen::{BuiltinFunctions, TargetIsa, TrampolineKind};
 
+#[cfg(feature = "component-model")]
+mod component;
+
 /// Function compilation context.
 /// This struct holds information that can be shared globally across
 /// all function compilations.
@@ -265,7 +268,7 @@ impl wasmtime_environ::Compiler for Compiler {
 
     #[cfg(feature = "component-model")]
     fn component_compiler(&self) -> &dyn wasmtime_environ::component::ComponentCompiler {
-        todo!()
+        self
     }
 
     fn append_dwarf(

@@ -178,6 +178,36 @@ impl TargetIsa for X64 {
         Ok(masm.finalize())
     }
 
+    #[cfg(feature = "component-model")]
+    fn compile_component_trampoline(
+        &self,
+        component: &wasmtime_environ::component::ComponentTranslation,
+        types: &wasmtime_environ::component::ComponentTypesBuilder,
+        trampoline: wasmtime_environ::component::TrampolineIndex,
+        kind: crate::trampoline::component::ComponentTrampolineKind,
+    ) -> Result<MachBufferFinalized<Final>> {
+        use crate::trampoline::component::ComponentTrampolineKind::*;
+
+        let mut masm = X64Masm::new(
+            self.pointer_bytes(),
+            self.shared_flags.clone(),
+            self.isa_flags.clone(),
+        );
+        let call_conv = self.wasmtime_call_conv();
+
+        let t = Trampoline::new(
+            &mut masm,
+            regs::scratch(),
+            regs::argv(),
+            &call_conv,
+            self.pointer_bytes(),
+        );
+
+        t.emit_component_trampoline(component, types, trampoline, kind)?;
+
+        Ok(masm.finalize())
+    }
+
     fn emit_unwind_info(
         &self,
         buffer: &MachBufferFinalized<Final>,
