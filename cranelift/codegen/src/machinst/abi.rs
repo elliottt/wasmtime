@@ -301,14 +301,6 @@ impl StackAMode {
             StackAMode::SPOffset(off, ty) => StackAMode::SPOffset(off + addend, ty),
         }
     }
-
-    pub fn get_type(&self) -> ir::Type {
-        match self {
-            &StackAMode::FPOffset(_, ty) => ty,
-            &StackAMode::NominalSPOffset(_, ty) => ty,
-            &StackAMode::SPOffset(_, ty) => ty,
-        }
-    }
 }
 
 /// Trait implemented by machine-specific backend to represent ISA flags.
@@ -2053,7 +2045,7 @@ impl<M: ABIMachineSpec> Callee<M> {
 #[derive(Clone, Debug)]
 pub enum ArgLoc {
     Reg(PReg),
-    Stack(StackAMode),
+    Stack { offset: i64, ty: Type },
 }
 
 /// An input argument to a call instruction: the vreg that is used,
@@ -2313,7 +2305,11 @@ impl<M: ABIMachineSpec> CallSite<M> {
                     vreg,
                     preg: preg.into(),
                 }),
-                ArgLoc::Stack(amode) => ctx.emit(M::gen_store_stack(amode, vreg, amode.get_type())),
+                ArgLoc::Stack { offset, ty } => ctx.emit(M::gen_store_stack(
+                    StackAMode::SPOffset(offset, ty),
+                    vreg,
+                    ty,
+                )),
             }
         }
     }
@@ -2400,10 +2396,7 @@ impl<M: ABIMachineSpec> CallSite<M> {
                                 } else {
                                     (*from_reg, ty)
                                 };
-                            locs.push((
-                                data.into(),
-                                ArgLoc::Stack(StackAMode::SPOffset(offset, ty)),
-                            ));
+                            locs.push((data.into(), ArgLoc::Stack { offset, ty }));
                         }
                     }
                 }
@@ -2428,7 +2421,7 @@ impl<M: ABIMachineSpec> CallSite<M> {
                     ABIArgSlot::Reg { reg, .. } => ArgLoc::Reg(reg.into()),
                     ABIArgSlot::Stack { offset, .. } => {
                         let ty = M::word_type();
-                        ArgLoc::Stack(StackAMode::SPOffset(offset, ty))
+                        ArgLoc::Stack { offset, ty }
                     }
                 };
                 locs.push((tmp.into(), loc));
@@ -2474,6 +2467,10 @@ impl<M: ABIMachineSpec> CallSite<M> {
             self.emit_copy_regs_to_buffer(ctx, i, *arg_regs);
         }
         for (i, value_regs) in arg_value_regs.iter().enumerate() {
+            assert!(matches!(
+                ctx.sigs().args(self.sig)[i],
+                ABIArg::Slots { .. }
+            ), "struct args and implicit pointers are not supported for tail calls");
             moves.append(&mut self.gen_arg(ctx, i, *value_regs));
         }
 

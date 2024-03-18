@@ -58,16 +58,9 @@ pub struct ReturnCallInfo {
     pub new_stack_arg_size: u32,
     /// The size of the current/old stack frame's stack arguments.
     pub old_stack_arg_size: u32,
-    /// The return address. Needs to be written into the correct stack slot
-    /// after the new stack frame is copied into place.
-    pub ret_addr: Option<Gpr>,
-    /// A copy of the frame pointer, because we will overwrite the current
-    /// `rbp`.
-    pub fp: Gpr,
-    /// A temporary register.
-    pub tmp: WritableGpr,
-    /// The in-register arguments and their constraints.
-    pub uses: CallArgList,
+    /// The (partial) allocation problem that will be given to the partial
+    /// move resolver.
+    pub moves: SmallVec<[(VReg, Allocation); 8]>,
 }
 
 #[test]
@@ -1678,27 +1671,17 @@ impl PrettyPrint for Inst {
                 let ReturnCallInfo {
                     new_stack_arg_size,
                     old_stack_arg_size,
-                    ret_addr,
-                    fp,
-                    tmp,
-                    uses,
+                    moves,
                 } = &**info;
-                let ret_addr = ret_addr.map(|r| regs::show_reg(*r));
-                let fp = regs::show_reg(fp.to_reg());
-                let tmp = regs::show_reg(tmp.to_reg().to_reg());
                 let mut s = format!(
                     "return_call_known \
                      {callee:?} \
                      new_stack_arg_size:{new_stack_arg_size} \
-                     old_stack_arg_size:{old_stack_arg_size} \
-                     ret_addr:{ret_addr:?} \
-                     fp:{fp} \
-                     tmp:{tmp}"
+                     old_stack_arg_size:{old_stack_arg_size}"
                 );
-                for ret in uses {
-                    let preg = regs::show_reg(ret.preg);
-                    let vreg = pretty_print_reg(ret.vreg, 8, allocs);
-                    write!(&mut s, " {vreg}={preg}").unwrap();
+                for (vreg, alloc) in moves {
+                    let vreg = pretty_print_reg(vreg.clone().into(), 8, allocs);
+                    write!(&mut s, " {vreg}={alloc:?}").unwrap();
                 }
                 s
             }
@@ -1707,28 +1690,18 @@ impl PrettyPrint for Inst {
                 let ReturnCallInfo {
                     new_stack_arg_size,
                     old_stack_arg_size,
-                    ret_addr,
-                    fp,
-                    tmp,
-                    uses,
+                    moves,
                 } = &**info;
                 let callee = callee.pretty_print(8, allocs);
-                let ret_addr = ret_addr.map(|r| regs::show_reg(*r));
-                let fp = regs::show_reg(fp.to_reg());
-                let tmp = regs::show_reg(tmp.to_reg().to_reg());
                 let mut s = format!(
                     "return_call_unknown \
                      {callee} \
                      new_stack_arg_size:{new_stack_arg_size} \
-                     old_stack_arg_size:{old_stack_arg_size} \
-                     ret_addr:{ret_addr:?} \
-                     fp:{fp} \
-                     tmp:{tmp}"
+                     old_stack_arg_size:{old_stack_arg_size}"
                 );
-                for ret in uses {
-                    let preg = regs::show_reg(ret.preg);
-                    let vreg = pretty_print_reg(ret.vreg, 8, allocs);
-                    write!(&mut s, " {vreg}={preg}").unwrap();
+                for (vreg, alloc) in moves {
+                    let vreg = pretty_print_reg(vreg.clone().into(), 8, allocs);
+                    write!(&mut s, " {vreg}={alloc:?}").unwrap();
                 }
                 s
             }
@@ -2062,7 +2035,7 @@ fn x64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut OperandCol
         } => {
             collector.reg_use(src1.to_reg());
             collector.reg_reuse_def(dst.to_writable_reg(), 0);
-            src2.get_operands(collector);
+            src2.get_operands(collector)
         }
         Inst::XmmRmRUnaligned {
             src1, src2, dst, ..
@@ -2387,42 +2360,20 @@ fn x64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut OperandCol
         }
 
         Inst::ReturnCallKnown { callee, info } => {
-            let ReturnCallInfo {
-                ret_addr,
-                fp,
-                tmp,
-                uses,
-                ..
-            } = &**info;
+            let ReturnCallInfo { moves: allocs, .. } = &**info;
             // Same as in the `Inst::CallKnown` branch.
             debug_assert_ne!(*callee, ExternalName::LibCall(LibCall::Probestack));
-            for u in uses {
-                collector.reg_fixed_use(u.vreg, u.preg);
+            for (vreg, _) in allocs {
+                collector.any_use(vreg.clone().into());
             }
-            if let Some(ret_addr) = ret_addr {
-                collector.reg_use(**ret_addr);
-            }
-            collector.reg_use(**fp);
-            collector.reg_early_def(tmp.to_writable_reg());
         }
 
         Inst::ReturnCallUnknown { callee, info } => {
-            let ReturnCallInfo {
-                ret_addr,
-                fp,
-                tmp,
-                uses,
-                ..
-            } = &**info;
+            let ReturnCallInfo { moves: allocs, .. } = &**info;
             callee.get_operands(collector);
-            for u in uses {
-                collector.reg_fixed_use(u.vreg, u.preg);
+            for (vreg, _) in allocs {
+                collector.any_use(vreg.clone().into());
             }
-            if let Some(ret_addr) = ret_addr {
-                collector.reg_use(**ret_addr);
-            }
-            collector.reg_use(**fp);
-            collector.reg_early_def(tmp.to_writable_reg());
         }
 
         Inst::JmpTableSeq {

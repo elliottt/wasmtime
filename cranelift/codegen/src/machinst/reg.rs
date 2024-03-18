@@ -353,6 +353,12 @@ impl<'a, F: Fn(VReg) -> VReg> OperandCollector<'a, F> {
         self.add_operand(Operand::fixed_nonallocatable(preg))
     }
 
+    /// Add a use of a `VReg`, in either a physical register or stack location.
+    pub fn any_use(&mut self, reg: Reg) {
+        debug_assert!(reg.is_virtual());
+        self.add_operand(Operand::any_use(reg.into()));
+    }
+
     /// Add a register use, at the start of the instruction (`Before`
     /// position).
     pub fn reg_use(&mut self, reg: Reg) {
@@ -527,6 +533,12 @@ impl<'a> AllocationConsumer<'a> {
             }
             None => {}
         }
+    }
+
+    /// Return the underlying allocation, with the assumption that the `VReg` used as the source of
+    /// the constraint was given an `any` constraint.
+    pub fn next_any(&mut self) -> Allocation {
+        self.allocs.next().unwrap().clone()
     }
 
     pub fn next(&mut self, pre_regalloc_reg: Reg) -> Reg {

@@ -1635,10 +1635,7 @@ pub(crate) fn emit(
                 state,
                 call_info.new_stack_arg_size,
                 call_info.old_stack_arg_size,
-                call_info.ret_addr,
-                call_info.fp,
-                call_info.tmp,
-                &call_info.uses,
+                &call_info.moves,
             );
 
             // Finally, jump to the callee!
@@ -1667,10 +1664,7 @@ pub(crate) fn emit(
                 state,
                 call_info.new_stack_arg_size,
                 call_info.old_stack_arg_size,
-                call_info.ret_addr,
-                call_info.fp,
-                call_info.tmp,
-                &call_info.uses,
+                &call_info.moves,
             );
 
             Inst::JmpUnknown { target: callee }.emit(&[], sink, info, state);
@@ -4254,10 +4248,7 @@ fn emit_return_call_common_sequence(
     state: &mut EmitState,
     new_stack_arg_size: u32,
     old_stack_arg_size: u32,
-    ret_addr: Option<Gpr>,
-    fp: Gpr,
-    tmp: WritableGpr,
-    uses: &CallArgList,
+    moves: &[(VReg, Allocation)],
 ) {
     assert!(
         info.flags.preserve_frame_pointers(),
@@ -4265,17 +4256,26 @@ fn emit_return_call_common_sequence(
                  but the current implementation relies on them being present"
     );
 
-    for u in uses {
-        let _ = allocs.next(u.vreg);
+    let mut resolver = regalloc2::moves::ParallelMoves::new();
+
+    for &(vreg, alloc) in moves {
+        eprintln!(" add {vreg} {alloc:?}");
+        resolver.add(allocs.next_any(), alloc, ());
     }
 
-    let ret_addr = ret_addr.map(|r| Gpr::new(allocs.next(*r)).unwrap());
+    let moves = resolver.resolve();
+    let resolver = regalloc2::moves::MoveAndScratchResolver {
+        find_free_reg: || None,
+        get_stackslot: || todo!("get_stack_slot"),
+        is_stack_alloc: Allocation::is_stack,
+        borrowed_scratch_reg: regs::rbp().to_real_reg().unwrap().into(),
+    };
 
-    let fp = allocs.next(*fp);
+    let moves = resolver.compute(moves);
+    // panic!("moves: {moves:?}");
 
-    let tmp = allocs.next(tmp.to_reg().to_reg());
-    let tmp = Gpr::new(tmp).unwrap();
-    let tmp_w = WritableGpr::from_reg(tmp);
+
+    /*
 
     // Copy the new frame (which is `frame_size` bytes above the SP)
     // onto our current frame, using only volatile, non-argument
@@ -4389,4 +4389,6 @@ fn emit_return_call_common_sequence(
         }
         .emit(&[], sink, info, state);
     }
+
+    */
 }

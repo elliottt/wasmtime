@@ -876,56 +876,37 @@ impl X64CallSite {
         let (new_stack_arg_size, old_stack_arg_size, moves) =
             self.emit_temporary_tail_call_frame(ctx, args);
 
-        self.emit_arg_moves(ctx, moves);
-
-        // Make a copy of the frame pointer, since we use it when copying down
-        // the new stack frame.
-        let fp = ctx.temp_writable_gpr();
-        let rbp = PReg::from(regs::rbp().to_real_reg().unwrap());
-        ctx.emit(Inst::MovFromPReg { src: rbp, dst: fp });
-
-        // Load the return address, because copying our new stack frame
-        // over our current stack frame might overwrite it, and we'll need to
-        // place it in the correct location after we do that copy.
-        //
-        // But we only need to actually move the return address if the size of
-        // stack arguments changes.
-        let ret_addr = if new_stack_arg_size != old_stack_arg_size {
-            let ret_addr = ctx.temp_writable_gpr();
-            ctx.emit(Inst::Mov64MR {
-                src: SyntheticAmode::Real(Amode::ImmReg {
-                    simm32: 8,
-                    base: *fp.to_reg(),
-                    flags: MemFlags::trusted(),
-                }),
-                dst: ret_addr,
-            });
-            Some(ret_addr.to_reg())
-        } else {
-            None
-        };
+        let moves = moves
+            .into_iter()
+            .map(|(vreg, arg_loc)| {
+                let alloc = match arg_loc {
+                    ArgLoc::Reg(preg) => regalloc2::Allocation::reg(preg),
+                    ArgLoc::Stack { offset, ty } => regalloc2::Allocation::stack(
+                        // TODO: maybe add 8 for return address offset?
+                        regalloc2::SpillSlot::new(usize::try_from(offset).unwrap()),
+                    ),
+                };
+                (vreg, alloc)
+            })
+            .collect();
 
         // Finally, emit the macro instruction to copy the new stack frame over
         // our current one and do the actual tail call!
 
-        let dest = self.dest().clone();
         let info = Box::new(ReturnCallInfo {
             new_stack_arg_size,
             old_stack_arg_size,
-            ret_addr,
-            fp: fp.to_reg(),
-            tmp: ctx.temp_writable_gpr(),
-            uses: self.take_uses(),
+            moves,
         });
-        match dest {
+        match self.dest() {
             CallDest::ExtName(callee, RelocDistance::Near) => {
-                ctx.emit(Inst::ReturnCallKnown { callee, info });
+                ctx.emit(Inst::ReturnCallKnown { callee: callee.clone(), info });
             }
             CallDest::ExtName(callee, RelocDistance::Far) => {
                 let tmp2 = ctx.temp_writable_gpr();
                 ctx.emit(Inst::LoadExtName {
                     dst: tmp2.to_writable_reg(),
-                    name: Box::new(callee),
+                    name: Box::new(callee.clone()),
                     offset: 0,
                     distance: RelocDistance::Far,
                 });
@@ -934,11 +915,13 @@ impl X64CallSite {
                     info,
                 });
             }
-            CallDest::Reg(callee) => ctx.emit(Inst::ReturnCallUnknown {
+            &CallDest::Reg(callee) => ctx.emit(Inst::ReturnCallUnknown {
                 callee: callee.into(),
                 info,
             }),
         }
+
+        assert!(self.take_uses().is_empty());
     }
 }
 
