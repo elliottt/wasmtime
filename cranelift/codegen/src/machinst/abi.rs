@@ -2438,39 +2438,6 @@ impl<M: ABIMachineSpec> CallSite<M> {
         locs
     }
 
-    /// Call `gen_arg` for each non-hidden argument and emit all instructions
-    /// generated.
-    pub fn emit_args(&mut self, ctx: &mut Lower<M::I>, (inputs, off): isle::ValueSlice) {
-        let num_args = self.num_args(ctx.sigs());
-        assert_eq!(inputs.len(&ctx.dfg().value_lists) - off, num_args);
-
-        let mut arg_value_regs: SmallVec<[_; 16]> = smallvec![];
-        for i in 0..num_args {
-            let input = inputs.get(off + i, &ctx.dfg().value_lists).unwrap();
-            arg_value_regs.push(ctx.put_value_in_regs(input));
-        }
-        for (i, arg_regs) in arg_value_regs.iter().enumerate() {
-            self.emit_copy_regs_to_buffer(ctx, i, *arg_regs);
-        }
-        for (i, value_regs) in arg_value_regs.iter().enumerate() {
-            let moves = self.gen_arg(ctx, i, *value_regs);
-            self.emit_arg_moves(ctx, moves);
-        }
-    }
-
-    /// Emit the code to forward a stack-return pointer argument through a tail
-    /// call.
-    pub fn emit_stack_ret_arg_for_tail_call(&mut self, ctx: &mut Lower<M::I>) {
-        if let Some(i) = ctx.sigs()[self.sig].stack_ret_arg() {
-            let ret_area_ptr = ctx.abi().ret_area_ptr.expect(
-                "if the tail callee has a return pointer, then the tail caller \
-                 must as well",
-            );
-            let moves = self.gen_arg(ctx, i.into(), ValueRegs::one(ret_area_ptr.to_reg()));
-            self.emit_arg_moves(ctx, moves);
-        }
-    }
-
     /// Builds a new temporary callee frame for the tail call and puts arguments into
     /// registers and stack slots (within the new temporary frame).
     ///
@@ -2483,7 +2450,7 @@ impl<M: ABIMachineSpec> CallSite<M> {
         &mut self,
         ctx: &mut Lower<M::I>,
         args: isle::ValueSlice,
-    ) -> (u32, u32) {
+    ) -> (u32, u32, SmallVec<[(VReg, ArgLoc); 2]>) {
         // Allocate additional stack space for the new stack frame. We will
         // build it in the newly allocated space, but then copy it over our
         // current frame at the last moment.
@@ -2492,10 +2459,35 @@ impl<M: ABIMachineSpec> CallSite<M> {
 
         // Put all arguments in registers and stack slots (within that newly
         // allocated stack space).
-        self.emit_args(ctx, args);
-        self.emit_stack_ret_arg_for_tail_call(ctx);
+        let mut moves = SmallVec::new();
+        let ctx: &mut Lower<M::I> = ctx;
+        let (inputs, off) = args;
+        let num_args = self.num_args(ctx.sigs());
+        assert_eq!(inputs.len(&ctx.dfg().value_lists) - off, num_args);
 
-        (new_stack_arg_size, old_stack_arg_size)
+        let mut arg_value_regs: SmallVec<[_; 16]> = smallvec![];
+        for i in 0..num_args {
+            let input = inputs.get(off + i, &ctx.dfg().value_lists).unwrap();
+            arg_value_regs.push(ctx.put_value_in_regs(input));
+        }
+        for (i, arg_regs) in arg_value_regs.iter().enumerate() {
+            self.emit_copy_regs_to_buffer(ctx, i, *arg_regs);
+        }
+        for (i, value_regs) in arg_value_regs.iter().enumerate() {
+            moves.append(&mut self.gen_arg(ctx, i, *value_regs));
+        }
+
+        // Emit the code to forward a stack-return pointer argument through a tail
+        // call.
+        if let Some(i) = ctx.sigs()[self.sig].stack_ret_arg() {
+            let ret_area_ptr = ctx.abi().ret_area_ptr.expect(
+                "if the tail callee has a return pointer, then the tail caller \
+                must as well",
+            );
+            moves.append(&mut self.gen_arg(ctx, i.into(), ValueRegs::one(ret_area_ptr.to_reg())));
+        }
+
+        (new_stack_arg_size, old_stack_arg_size, moves)
     }
 
     /// Define a return value after the call returns.

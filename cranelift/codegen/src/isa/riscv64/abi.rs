@@ -740,8 +740,10 @@ impl ABIMachineSpec for Riscv64MachineDeps {
 
 impl Riscv64ABICallSite {
     pub fn emit_return_call(mut self, ctx: &mut Lower<Inst>, args: isle::ValueSlice) {
-        let (new_stack_arg_size, old_stack_arg_size) =
+        let (new_stack_arg_size, old_stack_arg_size, moves) =
             self.emit_temporary_tail_call_frame(ctx, args);
+
+        self.emit_arg_moves(ctx, moves);
 
         let dest = self.dest().clone();
         let opcode = self.opcode();

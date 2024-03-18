@@ -873,8 +873,10 @@ impl ABIMachineSpec for X64ABIMachineSpec {
 
 impl X64CallSite {
     pub fn emit_return_call(mut self, ctx: &mut Lower<Inst>, args: isle::ValueSlice) {
-        let (new_stack_arg_size, old_stack_arg_size) =
+        let (new_stack_arg_size, old_stack_arg_size, moves) =
             self.emit_temporary_tail_call_frame(ctx, args);
+
+        self.emit_arg_moves(ctx, moves);
 
         // Make a copy of the frame pointer, since we use it when copying down
         // the new stack frame.
