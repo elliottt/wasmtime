@@ -2467,10 +2467,10 @@ impl<M: ABIMachineSpec> CallSite<M> {
             self.emit_copy_regs_to_buffer(ctx, i, *arg_regs);
         }
         for (i, value_regs) in arg_value_regs.iter().enumerate() {
-            assert!(matches!(
-                ctx.sigs().args(self.sig)[i],
-                ABIArg::Slots { .. }
-            ), "struct args and implicit pointers are not supported for tail calls");
+            assert!(
+                matches!(ctx.sigs().args(self.sig)[i], ABIArg::Slots { .. }),
+                "struct args and implicit pointers are not supported for tail calls"
+            );
             moves.append(&mut self.gen_arg(ctx, i, *value_regs));
         }
 

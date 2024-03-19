@@ -900,7 +900,10 @@ impl X64CallSite {
         });
         match self.dest() {
             CallDest::ExtName(callee, RelocDistance::Near) => {
-                ctx.emit(Inst::ReturnCallKnown { callee: callee.clone(), info });
+                ctx.emit(Inst::ReturnCallKnown {
+                    callee: callee.clone(),
+                    info,
+                });
             }
             CallDest::ExtName(callee, RelocDistance::Far) => {
                 let tmp2 = ctx.temp_writable_gpr();

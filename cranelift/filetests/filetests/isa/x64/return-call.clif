@@ -40,20 +40,18 @@ block0(v0: i64):
 ;   pushq   %rbp
 ;   movq    %rsp, %rbp
 ; block0:
-;   movq    %rbp, %rcx
-;   load_ext_name %callee_i64+0, %r8
-;   return_call_unknown %r8 new_stack_arg_size:0 old_stack_arg_size:0 ret_addr:None fp:%v193 tmp:%v194 %rax=%rax
+;   load_ext_name %callee_i64+0, %rcx
+;   return_call_unknown %rcx new_stack_arg_size:0 old_stack_arg_size:0 %rax=%rax
 ;
 ; Disassembled:
 ; block0: ; offset 0x0
 ;   pushq %rbp
 ;   movq %rsp, %rbp
 ; block1: ; offset 0x4
-;   movq %rbp, %rcx
-;   movabsq $0, %r8 ; reloc_external Abs8 %callee_i64 0
-;   movq (%rcx), %rbp
-;   leaq 8(%rcx), %rsp
-;   jmpq *%r8
+;   movabsq $0, %rcx ; reloc_external Abs8 %callee_i64 0
+;   movq (%rsp), %rbp
+;   addq $8, %rsp
+;   jmpq *%rcx
 
 ;;;; Test colocated tail calls ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -68,18 +66,16 @@ block0(v0: i64):
 ;   pushq   %rbp
 ;   movq    %rsp, %rbp
 ; block0:
-;   movq    %rbp, %rcx
-;   return_call_known TestCase(%callee_i64) new_stack_arg_size:0 old_stack_arg_size:0 ret_addr:None fp:%v193 tmp:%v194 %rax=%rax
+;   return_call_known TestCase(%callee_i64) new_stack_arg_size:0 old_stack_arg_size:0 %rax=%rax
 ;
 ; Disassembled:
 ; block0: ; offset 0x0
 ;   pushq %rbp
 ;   movq %rsp, %rbp
 ; block1: ; offset 0x4
-;   movq %rbp, %rcx
-;   movq (%rcx), %rbp
-;   leaq 8(%rcx), %rsp
-;   jmp 0x13 ; reloc_external CallPCRel4 %callee_i64 -4
+;   movq (%rsp), %rbp
+;   addq $8, %rsp
+;   jmp 0x11 ; reloc_external CallPCRel4 %callee_i64 -4
 
 ;;;; Test passing `f64`s ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -135,20 +131,18 @@ block0(v0: f64):
 ;   pushq   %rbp
 ;   movq    %rsp, %rbp
 ; block0:
-;   movq    %rbp, %rax
-;   load_ext_name %callee_f64+0, %r8
-;   return_call_unknown %r8 new_stack_arg_size:0 old_stack_arg_size:0 ret_addr:None fp:%v193 tmp:%v194 %xmm0=%xmm0
+;   load_ext_name %callee_f64+0, %rax
+;   return_call_unknown %rax new_stack_arg_size:0 old_stack_arg_size:0 %xmm0=%xmm0
 ;
 ; Disassembled:
 ; block0: ; offset 0x0
 ;   pushq %rbp
 ;   movq %rsp, %rbp
 ; block1: ; offset 0x4
-;   movq %rbp, %rax
-;   movabsq $0, %r8 ; reloc_external Abs8 %callee_f64 0
-;   movq (%rax), %rbp
-;   leaq 8(%rax), %rsp
-;   jmpq *%r8
+;   movabsq $0, %rax ; reloc_external Abs8 %callee_f64 0
+;   movq (%rsp), %rbp
+;   addq $8, %rsp
+;   jmpq *%rax
 
 ;;;; Test passing `i8`s ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -191,20 +185,18 @@ block0(v0: i8):
 ;   pushq   %rbp
 ;   movq    %rsp, %rbp
 ; block0:
-;   movq    %rbp, %rcx
-;   load_ext_name %callee_i8+0, %r8
-;   return_call_unknown %r8 new_stack_arg_size:0 old_stack_arg_size:0 ret_addr:None fp:%v193 tmp:%v194 %rax=%rax
+;   load_ext_name %callee_i8+0, %rcx
+;   return_call_unknown %rcx new_stack_arg_size:0 old_stack_arg_size:0 %rax=%rax
 ;
 ; Disassembled:
 ; block0: ; offset 0x0
 ;   pushq %rbp
 ;   movq %rsp, %rbp
 ; block1: ; offset 0x4
-;   movq %rbp, %rcx
-;   movabsq $0, %r8 ; reloc_external Abs8 %callee_i8 0
-;   movq (%rcx), %rbp
-;   leaq 8(%rcx), %rsp
-;   jmpq *%r8
+;   movabsq $0, %rcx ; reloc_external Abs8 %callee_i8 0
+;   movq (%rsp), %rbp
+;   addq $8, %rsp
+;   jmpq *%rcx
 
 ;;;; Test passing many arguments on stack ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

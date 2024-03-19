@@ -4258,8 +4258,34 @@ fn emit_return_call_common_sequence(
 
     let mut resolver = regalloc2::moves::ParallelMoves::new();
 
-    for &(vreg, alloc) in moves {
-        eprintln!(" add {vreg} {alloc:?}");
+    // Ensure that the return pointer and frame pointer get moved as well.
+    let fp_offset_source =
+        usize::try_from(state.virtual_sp_offset() + state.nominal_sp_to_fp()).unwrap();
+
+    let rbp = regs::rbp().to_real_reg().unwrap().into();
+    resolver.add(
+        Allocation::stack(SpillSlot::new(fp_offset_source)),
+        Allocation::reg(rbp),
+        (),
+    );
+
+    let fp_offset_dest = if new_stack_arg_size > old_stack_arg_size {
+        fp_offset_source - usize::try_from(new_stack_arg_size - old_stack_arg_size).unwrap()
+    } else {
+        fp_offset_source + usize::try_from(old_stack_arg_size - new_stack_arg_size).unwrap()
+    };
+
+    resolver.add(
+        Allocation::stack(SpillSlot::new(fp_offset_source + 8)),
+        Allocation::stack(SpillSlot::new(fp_offset_dest + 8)),
+        (),
+    );
+
+    for &(_, mut alloc) in moves {
+        if let Some(slot) = alloc.as_stack() {
+            alloc = Allocation::stack(slot.plus(fp_offset_dest + 16));
+        }
+
         resolver.add(allocs.next_any(), alloc, ());
     }
 
@@ -4268,12 +4294,61 @@ fn emit_return_call_common_sequence(
         find_free_reg: || None,
         get_stackslot: || todo!("get_stack_slot"),
         is_stack_alloc: Allocation::is_stack,
-        borrowed_scratch_reg: regs::rbp().to_real_reg().unwrap().into(),
+        borrowed_scratch_reg: rbp,
     };
 
     let moves = resolver.compute(moves);
-    // panic!("moves: {moves:?}");
 
+    for (src, dst, _) in moves {
+        if let Some(src) = src.as_stack() {
+            assert!(dst.is_reg());
+            Inst::Mov64MR {
+                src: SyntheticAmode::Real(Amode::ImmReg {
+                    simm32: src.index().try_into().unwrap(),
+                    base: regs::rsp(),
+                    flags: MemFlags::trusted(),
+                }),
+                dst: Writable::from_reg(Gpr::new(dst.as_reg().unwrap().into()).unwrap()),
+            }
+            .emit(&[], sink, info, state);
+        } else {
+            assert!(src.is_reg());
+            let src = Gpr::new(src.as_reg().unwrap().into()).unwrap();
+            if let Some(dst) = dst.as_stack() {
+                Inst::MovRM {
+                    size: OperandSize::Size64,
+                    src,
+                    dst: SyntheticAmode::Real(Amode::ImmReg {
+                        // Add 2 because we need to skip over the old FP and the
+                        // return address.
+                        simm32: dst.index().try_into().unwrap(),
+                        base: regs::rsp(),
+                        flags: MemFlags::trusted(),
+                    }),
+                }
+                .emit(&[], sink, info, state);
+            } else {
+                assert!(dst.is_reg());
+                let dst = Writable::from_reg(Gpr::new(dst.as_reg().unwrap().into()).unwrap());
+                Inst::MovRR {
+                    size: OperandSize::Size64,
+                    src,
+                    dst,
+                }
+                .emit(&[], sink, info, state);
+            }
+        }
+    }
+
+    // Finally, fix RSP to point to the slot after the return address.
+    Inst::AluRmiR {
+        size: OperandSize::Size64,
+        op: AluRmiROpcode::Add,
+        src1: Gpr::new(regs::rsp()).unwrap(),
+        src2: GprMemImm::new(RegMemImm::imm((fp_offset_dest + 8).try_into().unwrap())).unwrap(),
+        dst: Writable::from_reg(Gpr::new(regs::rsp()).unwrap()),
+    }
+    .emit(&[], sink, info, state);
 
     /*
 

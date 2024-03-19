@@ -5,7 +5,7 @@ pub use emit_state::EmitState;
 use crate::binemit::{Addend, CodeOffset, Reloc, StackMap};
 use crate::ir::{types, ExternalName, LibCall, Opcode, TrapCode, Type};
 use crate::isa::x64::abi::X64ABIMachineSpec;
-use crate::isa::x64::inst::regs::{pretty_print_reg, show_ireg_sized};
+use crate::isa::x64::inst::regs::{pretty_print_allocation, pretty_print_reg, show_ireg_sized};
 use crate::isa::x64::settings as x64_settings;
 use crate::isa::{CallConv, FunctionAlignment};
 use crate::{machinst::*, trace};
@@ -1679,9 +1679,10 @@ impl PrettyPrint for Inst {
                      new_stack_arg_size:{new_stack_arg_size} \
                      old_stack_arg_size:{old_stack_arg_size}"
                 );
-                for (vreg, alloc) in moves {
-                    let vreg = pretty_print_reg(vreg.clone().into(), 8, allocs);
-                    write!(&mut s, " {vreg}={alloc:?}").unwrap();
+                for (_, dst) in moves {
+                    let src = pretty_print_allocation(allocs.next_any(), 8);
+                    let dst = pretty_print_allocation(*dst, 8);
+                    write!(&mut s, " {src}={dst}").unwrap();
                 }
                 s
             }
@@ -1699,9 +1700,10 @@ impl PrettyPrint for Inst {
                      new_stack_arg_size:{new_stack_arg_size} \
                      old_stack_arg_size:{old_stack_arg_size}"
                 );
-                for (vreg, alloc) in moves {
-                    let vreg = pretty_print_reg(vreg.clone().into(), 8, allocs);
-                    write!(&mut s, " {vreg}={alloc:?}").unwrap();
+                for (_, dst) in moves {
+                    let src = pretty_print_allocation(allocs.next_any(), 8);
+                    let dst = pretty_print_allocation(*dst, 8);
+                    write!(&mut s, " {src}={dst}").unwrap();
                 }
                 s
             }

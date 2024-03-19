@@ -274,3 +274,13 @@ pub fn pretty_print_reg(reg: Reg, size: u8, allocs: &mut AllocationConsumer<'_>)
     let reg = allocs.next(reg);
     show_ireg_sized(reg, size)
 }
+
+pub fn pretty_print_allocation(alloc: regalloc2::Allocation, size: u8) -> String {
+    if let Some(reg) = alloc.as_reg() {
+        show_ireg_sized(reg.into(), size)
+    } else if let Some(slot) = alloc.as_stack() {
+        slot.to_string()
+    } else {
+        panic!()
+    }
+}
