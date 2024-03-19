@@ -4295,7 +4295,15 @@ fn emit_return_call_common_sequence(
             alloc = Allocation::stack(slot.plus(fp_offset_dest + 16));
         }
 
-        resolver.add(allocs.next_any(), alloc, ());
+        // NOTE: bad!
+        let mut src = allocs.next_any();
+        if let Some(slot) = src.as_stack() {
+            src = Allocation::stack(SpillSlot::new(
+                slot.index() * 8 + usize::try_from(state.virtual_sp_offset()).unwrap(),
+            ));
+        }
+
+        resolver.add(src, alloc, ());
     }
 
     let moves = resolver.resolve();

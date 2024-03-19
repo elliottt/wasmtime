@@ -882,7 +882,6 @@ impl X64CallSite {
                 let alloc = match arg_loc {
                     ArgLoc::Reg(preg) => regalloc2::Allocation::reg(preg),
                     ArgLoc::Stack { offset, ty } => regalloc2::Allocation::stack(
-                        // TODO: maybe add 8 for return address offset?
                         regalloc2::SpillSlot::new(usize::try_from(offset).unwrap()),
                     ),
                 };
