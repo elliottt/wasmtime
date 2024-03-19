@@ -897,6 +897,8 @@ impl X64CallSite {
             new_stack_arg_size,
             old_stack_arg_size,
             moves,
+            tmp1: ctx.temp_writable_gpr(),
+            tmp2: ctx.temp_writable_gpr(),
         });
         match self.dest() {
             CallDest::ExtName(callee, RelocDistance::Near) => {

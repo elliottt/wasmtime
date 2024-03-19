@@ -1636,6 +1636,8 @@ pub(crate) fn emit(
                 call_info.new_stack_arg_size,
                 call_info.old_stack_arg_size,
                 &call_info.moves,
+                call_info.tmp1.to_writable_reg(),
+                call_info.tmp2.to_writable_reg(),
             );
 
             // Finally, jump to the callee!
@@ -1665,6 +1667,8 @@ pub(crate) fn emit(
                 call_info.new_stack_arg_size,
                 call_info.old_stack_arg_size,
                 &call_info.moves,
+                call_info.tmp1.to_writable_reg(),
+                call_info.tmp2.to_writable_reg(),
             );
 
             Inst::JmpUnknown { target: callee }.emit(&[], sink, info, state);
@@ -4249,12 +4253,17 @@ fn emit_return_call_common_sequence(
     new_stack_arg_size: u32,
     old_stack_arg_size: u32,
     moves: &[(VReg, Allocation)],
+    tmp1: Writable<Reg>,
+    tmp2: Writable<Reg>,
 ) {
     assert!(
         info.flags.preserve_frame_pointers(),
         "frame pointers aren't fundamentally required for tail calls, \
                  but the current implementation relies on them being present"
     );
+
+    let tmp1 = allocs.next(tmp1.to_reg()).to_real_reg().unwrap().into();
+    let tmp2 = allocs.next(tmp2.to_reg()).to_real_reg().unwrap().into();
 
     let mut resolver = regalloc2::moves::ParallelMoves::new();
 
@@ -4290,8 +4299,9 @@ fn emit_return_call_common_sequence(
     }
 
     let moves = resolver.resolve();
+    let mut find_free_reg = [tmp1, tmp2].into_iter();
     let resolver = regalloc2::moves::MoveAndScratchResolver {
-        find_free_reg: || None,
+        find_free_reg: || find_free_reg.next().map(Allocation::reg),
         get_stackslot: || todo!("get_stack_slot"),
         is_stack_alloc: Allocation::is_stack,
         borrowed_scratch_reg: rbp,
@@ -4329,7 +4339,9 @@ fn emit_return_call_common_sequence(
                 .emit(&[], sink, info, state);
             } else {
                 assert!(dst.is_reg());
-                let dst = Writable::from_reg(Gpr::new(dst.as_reg().unwrap().into()).unwrap());
+                let dst = dst.as_reg().unwrap().into();
+                let dst =
+                    Writable::from_reg(Gpr::new(dst).expect(&format!("gpr? {src:?} -> {dst:?}")));
                 Inst::MovRR {
                     size: OperandSize::Size64,
                     src,

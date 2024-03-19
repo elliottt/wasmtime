@@ -61,6 +61,9 @@ pub struct ReturnCallInfo {
     /// The (partial) allocation problem that will be given to the partial
     /// move resolver.
     pub moves: SmallVec<[(VReg, Allocation); 8]>,
+
+    pub tmp1: Writable<Gpr>,
+    pub tmp2: Writable<Gpr>,
 }
 
 #[test]
@@ -1672,12 +1675,18 @@ impl PrettyPrint for Inst {
                     new_stack_arg_size,
                     old_stack_arg_size,
                     moves,
+                    tmp1,
+                    tmp2,
                 } = &**info;
+                let tmp1 = pretty_print_reg(tmp1.to_reg().into(), 8, allocs);
+                let tmp2 = pretty_print_reg(tmp2.to_reg().into(), 8, allocs);
                 let mut s = format!(
                     "return_call_known \
                      {callee:?} \
                      new_stack_arg_size:{new_stack_arg_size} \
-                     old_stack_arg_size:{old_stack_arg_size}"
+                     old_stack_arg_size:{old_stack_arg_size} \
+                     tmp1:{tmp1} \
+                     tmp2:{tmp2}"
                 );
                 for (_, dst) in moves {
                     let src = pretty_print_allocation(allocs.next_any(), 8);
@@ -1692,13 +1701,19 @@ impl PrettyPrint for Inst {
                     new_stack_arg_size,
                     old_stack_arg_size,
                     moves,
+                    tmp1,
+                    tmp2,
                 } = &**info;
                 let callee = callee.pretty_print(8, allocs);
+                let tmp1 = pretty_print_reg(tmp1.to_reg().into(), 8, allocs);
+                let tmp2 = pretty_print_reg(tmp2.to_reg().into(), 8, allocs);
                 let mut s = format!(
                     "return_call_unknown \
                      {callee} \
                      new_stack_arg_size:{new_stack_arg_size} \
-                     old_stack_arg_size:{old_stack_arg_size}"
+                     old_stack_arg_size:{old_stack_arg_size} \
+                     tmp1:{tmp1} \
+                     tmp2:{tmp2}"
                 );
                 for (_, dst) in moves {
                     let src = pretty_print_allocation(allocs.next_any(), 8);
@@ -2362,17 +2377,21 @@ fn x64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut OperandCol
         }
 
         Inst::ReturnCallKnown { callee, info } => {
-            let ReturnCallInfo { moves: allocs, .. } = &**info;
+            let ReturnCallInfo { moves: allocs, tmp1, tmp2, .. } = &**info;
             // Same as in the `Inst::CallKnown` branch.
             debug_assert_ne!(*callee, ExternalName::LibCall(LibCall::Probestack));
+            collector.reg_fixed_def(tmp1.to_writable_reg(), regs::r14());
+            collector.reg_fixed_def(tmp2.to_writable_reg(), regs::r15());
             for (vreg, _) in allocs {
                 collector.any_use(vreg.clone().into());
             }
         }
 
         Inst::ReturnCallUnknown { callee, info } => {
-            let ReturnCallInfo { moves: allocs, .. } = &**info;
+            let ReturnCallInfo { moves: allocs, tmp1, tmp2, .. } = &**info;
             callee.get_operands(collector);
+            collector.reg_fixed_def(tmp1.to_writable_reg(), regs::r14());
+            collector.reg_fixed_def(tmp2.to_writable_reg(), regs::r15());
             for (vreg, _) in allocs {
                 collector.any_use(vreg.clone().into());
             }
