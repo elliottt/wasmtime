@@ -1856,14 +1856,6 @@ impl<M: ABIMachineSpec> Callee<M> {
         let frame_layout = self.frame_layout();
         let mut insts = smallvec![];
 
-        // Set up frame.
-        insts.extend(M::gen_prologue_frame_setup(
-            self.call_conv,
-            &self.flags,
-            &self.isa_flags,
-            &frame_layout,
-        ));
-
         // The stack limit check needs to cover all the stack adjustments we
         // might make, up to the next stack limit check in any function we
         // call. Since this happens after frame setup, the current function's
@@ -1909,6 +1901,14 @@ impl<M: ABIMachineSpec> Callee<M> {
                 }
             }
         }
+
+        // Set up frame.
+        insts.extend(M::gen_prologue_frame_setup(
+            self.call_conv,
+            &self.flags,
+            &self.isa_flags,
+            &frame_layout,
+        ));
 
         // Save clobbered registers.
         insts.extend(M::gen_clobber_save(

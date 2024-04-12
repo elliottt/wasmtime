@@ -539,14 +539,44 @@ impl ABIMachineSpec for X64ABIMachineSpec {
         let r_rbp = regs::rbp();
         let w_rbp = Writable::from_reg(r_rbp);
         let mut insts = SmallVec::new();
+
+        // When a return_call within this function required more stack arguments than we have
+        // present, resize the incoming argument area of the frame to accommodate those arguments.
+        let incoming_args_diff = frame_layout.tail_args_size - frame_layout.incoming_args_size;
+        if incoming_args_diff > 0 {
+            debug_assert_eq!(incoming_args_diff % 16, 0);
+
+            // Decrement the stack pointer to make space for the new arguments
+            insts.push(Inst::alu_rmi_r(
+                OperandSize::Size64,
+                AluRmiROpcode::Sub,
+                RegMemImm::imm(incoming_args_diff),
+                Writable::from_reg(regs::rsp()),
+            ));
+
+            let incoming_args_diff = i32::try_from(incoming_args_diff).unwrap();
+
+            // Move the saved return address down by `incoming_args_diff`
+            insts.push(Inst::mov64_m_r(
+                Amode::imm_reg(incoming_args_diff, regs::rsp()),
+                Writable::from_reg(regs::r11()),
+            ));
+            insts.push(Inst::mov_r_m(
+                OperandSize::Size64,
+                regs::r11(),
+                Amode::imm_reg(0, regs::rsp()),
+            ));
+        }
+
         // `push %rbp`
-        // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
+        // RSP before this push is 8 % 16 as the call pushes the return address. After this push,
+        // it is 0 % 16.
         insts.push(Inst::push64(RegMemImm::reg(r_rbp)));
 
         if flags.unwind_info() {
             insts.push(Inst::Unwind {
                 inst: UnwindInst::PushFrameRegs {
-                    offset_upward_to_caller_sp: frame_layout.setup_area_size,
+                    offset_upward_to_caller_sp: frame_layout.setup_area_size + incoming_args_diff,
                 },
             });
         }
@@ -643,46 +673,6 @@ impl ABIMachineSpec for X64ABIMachineSpec {
         // When a return_call within this function required more stack arguments than we have
         // present, resize the incoming argument area of the frame to accommodate those arguments.
         let incoming_args_diff = frame_layout.tail_args_size - frame_layout.incoming_args_size;
-        if incoming_args_diff > 0 {
-            // Decrement the stack pointer to make space for the new arguments
-            insts.push(Inst::alu_rmi_r(
-                OperandSize::Size64,
-                AluRmiROpcode::Sub,
-                RegMemImm::imm(incoming_args_diff),
-                Writable::from_reg(regs::rsp()),
-            ));
-
-            // Make sure to keep the frame pointer and stack pointer in sync at this point
-            insts.push(Inst::mov_r_r(
-                OperandSize::Size64,
-                regs::rsp(),
-                Writable::from_reg(regs::rbp()),
-            ));
-
-            let incoming_args_diff = i32::try_from(incoming_args_diff).unwrap();
-
-            // Move the saved frame pointer down by `incoming_args_diff`
-            insts.push(Inst::mov64_m_r(
-                Amode::imm_reg(incoming_args_diff, regs::rsp()),
-                Writable::from_reg(regs::r11()),
-            ));
-            insts.push(Inst::mov_r_m(
-                OperandSize::Size64,
-                regs::r11(),
-                Amode::imm_reg(0, regs::rsp()),
-            ));
-
-            // Move the saved return address down by `incoming_args_diff`
-            insts.push(Inst::mov64_m_r(
-                Amode::imm_reg(incoming_args_diff + 8, regs::rsp()),
-                Writable::from_reg(regs::r11()),
-            ));
-            insts.push(Inst::mov_r_m(
-                OperandSize::Size64,
-                regs::r11(),
-                Amode::imm_reg(8, regs::rsp()),
-            ));
-        }
 
         if flags.unwind_info() && frame_layout.setup_area_size > 0 {
             // Emit unwind info: start the frame. The frame (from unwind
@@ -692,7 +682,7 @@ impl ABIMachineSpec for X64ABIMachineSpec {
             insts.push(Inst::Unwind {
                 inst: UnwindInst::DefineNewFrame {
                     offset_downward_to_clobbers: frame_layout.clobber_size,
-                    offset_upward_to_caller_sp: frame_layout.setup_area_size,
+                    offset_upward_to_caller_sp: frame_layout.setup_area_size + incoming_args_diff,
                 },
             });
         }

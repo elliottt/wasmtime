@@ -48,8 +48,6 @@ block0:
 }
 
 ; VCode:
-;   pushq   %rbp
-;   movq    %rsp, %rbp
 ;   subq    %rsp, $65536, %rsp
 ;   movl    %esp, 0(%rsp)
 ;   subq    %rsp, $65536, %rsp
@@ -57,6 +55,8 @@ block0:
 ;   subq    %rsp, $65536, %rsp
 ;   movl    %esp, 0(%rsp)
 ;   addq    %rsp, $196608, %rsp
+;   pushq   %rbp
+;   movq    %rsp, %rbp
 ;   subq    %rsp, $196608, %rsp
 ; block0:
 ;   lea     rsp(0 + virtual offset), %rax
@@ -67,8 +67,6 @@ block0:
 ;
 ; Disassembled:
 ; block0: ; offset 0x0
-;   pushq %rbp
-;   movq %rsp, %rbp
 ;   subq $0x10000, %rsp
 ;   movl %esp, (%rsp)
 ;   subq $0x10000, %rsp
@@ -76,6 +74,8 @@ block0:
 ;   subq $0x10000, %rsp
 ;   movl %esp, (%rsp)
 ;   addq $0x30000, %rsp
+;   pushq %rbp
+;   movq %rsp, %rbp
 ;   subq $0x30000, %rsp
 ; block1: ; offset 0x30
 ;   leaq (%rsp), %rax
@@ -93,9 +93,9 @@ block0:
 }
 
 ; VCode:
+;   stack_probe_loop %r11, frame_size=2097152, guard_size=65536
 ;   pushq   %rbp
 ;   movq    %rsp, %rbp
-;   stack_probe_loop %r11, frame_size=2097152, guard_size=65536
 ;   subq    %rsp, $2097152, %rsp
 ; block0:
 ;   lea     rsp(0 + virtual offset), %rax
@@ -106,15 +106,15 @@ block0:
 ;
 ; Disassembled:
 ; block0: ; offset 0x0
-;   pushq %rbp
-;   movq %rsp, %rbp
 ;   movq %rsp, %r11
 ;   subq $0x200000, %r11
 ;   subq $0x10000, %rsp
 ;   movl %esp, (%rsp)
 ;   cmpq %rsp, %r11
-;   jne 0xe
+;   jne 0xa
 ;   addq $0x200000, %rsp
+;   pushq %rbp
+;   movq %rsp, %rbp
 ;   subq $0x200000, %rsp
 ; block1: ; offset 0x2f
 ;   leaq (%rsp), %rax
